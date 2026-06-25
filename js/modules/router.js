@@ -99,10 +99,19 @@ const Router = {
   // ── URL에서 직접 접근 시 복원 (App.showApp에서 호출) ─────
   restoreFromUrl: function() {
     const { pageId, param } = this._matchPath(location.pathname);
-    if (pageId === '__login__') return false; // 로그인 페이지면 앱 진입 안 함
-    // URL에 맞는 페이지로 진입 (pushState 없이)
+    if (pageId === '__login__') return false;
+  
     history.replaceState({ pageId, param: param || null }, '', location.pathname);
     this.currentPage = pageId;
+  
+    // client-detail은 param(고객ID) 필수 확인
+    if (pageId === 'client-detail' && !param) {
+      this._renderPage('clients');
+      this._updateNav('clients');
+      this.currentPage = 'clients';
+      return true;
+    }
+  
     this._renderPage(pageId, param);
     this._updateNav(pageId);
     return true;

@@ -15,14 +15,20 @@ const Pages = {
 
 const App = {
   init: function() {
+    Router.init(); // popstate 리스너 등록
     // 항상 로그인 페이지로 시작 (자동 로그인 비활성화)
     Auth.logout();
+    // /login 이외 경로로 직접 접근해도 로그인 페이지로
+    history.replaceState(null, '', '/login');
     this.showLogin();
   },
 
   showLogin: function() {
     document.getElementById('login-page').classList.remove('hidden');
     document.getElementById('app-layout').classList.add('hidden');
+    if (location.pathname !== '/login') {
+      history.replaceState(null, '', '/login');
+    }
     LoginPage.init();
   },
 
@@ -31,7 +37,10 @@ const App = {
     document.getElementById('app-layout').classList.remove('hidden');
     this._renderSidebar();
     this._bindGlobalEvents();
-    Router.navigate('dashboard');
+    // URL 직접 접근 시 해당 페이지 복원, 아니면 dashboard
+    if (!Router.restoreFromUrl()) {
+      Router.navigate('dashboard');
+    }
   },
 
   _renderSidebar: function() {

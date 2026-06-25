@@ -23,6 +23,9 @@ const App = {
       history.replaceState(null, '', '/login');
       this.showLogin();
     }
+    // 준비 완료 후 보이게
+    document.getElementById('login-page').style.visibility = 'visible';
+    document.getElementById('app-layout').style.visibility = 'visible';
   },
 
   showLogin: function() {

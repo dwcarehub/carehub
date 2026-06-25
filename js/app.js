@@ -15,12 +15,14 @@ const Pages = {
 
 const App = {
   init: function() {
-    Router.init(); // popstate 리스너 등록
-    // 항상 로그인 페이지로 시작 (자동 로그인 비활성화)
-    Auth.logout();
-    // /login 이외 경로로 직접 접근해도 로그인 페이지로
-    history.replaceState(null, '', '/login');
-    this.showLogin();
+    Router.init();
+    // 로그인 상태면 앱으로, 아니면 로그인 페이지로
+    if (Auth.isLoggedIn()) {
+      this.showApp();
+    } else {
+      history.replaceState(null, '', '/login');
+      this.showLogin();
+    }
   },
 
   showLogin: function() {

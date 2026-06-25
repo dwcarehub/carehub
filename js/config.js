@@ -21,7 +21,7 @@ const _isProd = (() => {
   const host = window.location.hostname;
   // localhost, 127.0.0.1, carehub-dev.netlify.app → DEV
   // 그 외 모든 도메인 → PROD
-  return !['localhost', '127.0.0.1'].includes(host) && !host.includes('carehub-dev');
+  return !['localhost', '127.0.0.1'].includes(host) && !host.includes('carehub-report-dev');
 })();
 
 const AppConfig = {

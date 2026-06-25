@@ -347,12 +347,19 @@ const AssessmentsPage = {
   _loadRoundData: async function() {
     const area=document.getElementById('assess-form-area');
     if (area) area.innerHTML='<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div></div>';
-    try {
-      UI.showLoading();
-      const res=await API.getRoundData(this.selectedClient.clientId, this.activeRound);
-      this.roundData = res.status==='success' ? res.data : null;
-    } catch { this.roundData=null; }
-    finally { UI.hideLoading(); }
+    // ✅ 캐시 확인 — 있으면 API 호출 스킵
+    const cacheParams = { action:'getRoundData', clientId:this.selectedClient.clientId, round:this.activeRound };
+    const cached = API._getCached('getRoundData', cacheParams);
+    if (cached) {
+      this.roundData = cached.data;
+    } else {
+      try {
+        UI.showLoading();
+        const res=await API.getRoundData(this.selectedClient.clientId, this.activeRound);
+        this.roundData = res.status==='success' ? res.data : null;
+      } catch { this.roundData=null; }
+      finally { UI.hideLoading(); }
+    }
     this._updateProgress();
     this._refreshCatTabs();
     this._renderForm();
@@ -1488,10 +1495,9 @@ const AssessmentsPage = {
           await API.invalidateReport(this.selectedClient.clientId, this.activeRound);
           UI.toast('평가가 수정되었습니다. 통합 리포트를 다시 생성해주세요.', 'warning');
         } else {
-          UI.toast(res.data.message||'저장되었습니다.','success');
+          UI.toast(res.data?.message||'저장되었습니다.','success');
         }
-        const ir=await API.getInitialData();
-        if (ir.status==='success') { this.allClients=(ir.data.clients||[]).filter(c=>c.status==='입소중'); this.overview=ir.data.overview||{}; this._renderClientList(); }
+        // ✅ getInitialData 제거 — roundData만 갱신
         await this._loadRoundData();
       } else UI.toast(res.message||'저장 실패','error');
     } catch { UI.toast('서버 오류가 발생했습니다.','error'); }
@@ -1507,8 +1513,7 @@ const AssessmentsPage = {
       const res=await API.deleteSheetRow(this.selectedClient.clientId,this.activeRound,sheetType);
       if (res.status==='success') {
         UI.toast(res.data.message,'success');
-        const ir=await API.getInitialData();
-        if (ir.status==='success') { this.allClients=(ir.data.clients||[]).filter(c=>c.status==='입소중'); this.overview=ir.data.overview||{}; this._renderClientList(); }
+        // ✅ getInitialData 제거 — roundData만 갱신
         await this._loadRoundData();
       } else UI.toast(res.message||'삭제 실패','error');
     } catch { UI.toast('서버 오류가 발생했습니다.','error'); }

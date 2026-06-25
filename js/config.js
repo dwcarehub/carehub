@@ -13,8 +13,8 @@
 //
 // ============================================================
 const _API_URLS = {
-  dev:  'https://script.google.com/macros/s/18h-uPlYDYHBIXi7SIqeQKvS2XciD3LLR6cFNrFO9VGo/exec',
-  prod: 'https://script.google.com/macros/s/18I2sxKf8TKaiRvUoBsq-nM6KEZJrJ3oKVgXAFKjgFAo/exec',
+  dev:  'https://script.google.com/macros/s/AKfycbxnSaHNVBxCshbx-kwc3eTseJ4nfPOXgrJ7sumrysbrN4uDiO51AQwoW51TE9lJOPpgPA/exec',
+  prod: 'https://script.google.com/macros/s/AKfycbxU1r6j2nTrF3nN9FxIL8xRd8PFUqnqoP_wF4ZH5rlFA7YmiZwDhk0bqMPClOQR4Yxjlg/exec',
 };
 
 const _isProd = (() => {

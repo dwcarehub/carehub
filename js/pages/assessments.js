@@ -346,16 +346,26 @@ const AssessmentsPage = {
 
   _loadRoundData: async function() {
     const area=document.getElementById('assess-form-area');
-    if (area) area.innerHTML='<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div></div>';
-    try {
-      UI.showLoading();
-      const res=await API.getRoundData(this.selectedClient.clientId, this.activeRound);
-      this.roundData = res.status==='success' ? res.data : null;
-    } catch { this.roundData=null; }
-    finally { UI.hideLoading(); }
+    // ✅ 캐시 확인 — 있으면 API 호출 스킵
+    const cacheParams = { action:'getRoundData', clientId:this.selectedClient.clientId, round:this.activeRound };
+    const cached = API._getCached('getRoundData', cacheParams);
+    if (cached) {
+      this.roundData = cached.data;
+    } else {
+      if (area) area.innerHTML='<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div></div>';
+      try {
+        UI.showLoading();
+        const res=await API.getRoundData(this.selectedClient.clientId, this.activeRound);
+        this.roundData = res.status==='success' ? res.data : null;
+      } catch { this.roundData=null; }
+      finally { UI.hideLoading(); }
+    }
+    // ✅ 스피너 즉시 제거 → 빈 컨테이너 먼저 노출
+    if (area) area.innerHTML='<div id="assess-form-inner"></div>';
     this._updateProgress();
     this._refreshCatTabs();
-    this._renderForm();
+    // ✅ 폼 렌더링은 다음 프레임에 실행 (스피너 제거 후 브라우저가 먼저 그리게)
+    requestAnimationFrame(() => this._renderForm());
   },
 
   _refreshCatTabs: function() {
@@ -506,9 +516,14 @@ const AssessmentsPage = {
     const v = d || {};
     const ro = canWrite ? '' : 'readonly';
     const today = AssessUtils._fmt(new Date());
+    const hasData = !!d; // ✅ 데이터 유무 플래그
 
-    // 차트 SVG 생성 함수들
+    // 차트 SVG 생성 함수들 — 데이터 없으면 빈 placeholder 반환
+    const emptyViz = (msg='점수 입력 시 표시') =>
+      `<div style="height:90px;display:flex;align-items:center;justify-content:center;color:var(--color-gray-300);font-size:12px;">${msg}</div>`;
+
     const gaugeHalf = (score, color='#1565C0', max=100) => {
+      if (!hasData && score==null) return emptyViz();
       // 반원 게이지 (기본 0~100, max 파라미터로 조정 가능)
       const pct = Math.min(100, Math.max(0, (Number(score)||0) / max * 100));
       const angle = (pct / 100) * 180;
@@ -526,8 +541,14 @@ const AssessmentsPage = {
     };
 
     // 공통 메서드 this._conicDonut 참조
-    const conicDonut = (score, color, max, size, thickness) => this._conicDonut(score, color, max, size, thickness);
-    const gaugeCircle = (score, color, max) => this._conicDonut(score, color||'#2E7D32', max||100, 100, 14);
+    const conicDonut = (score, color, max, size, thickness) => {
+      if (!hasData && score==null) return emptyViz();
+      return this._conicDonut(score, color, max, size, thickness);
+    };
+    const gaugeCircle = (score, color, max) => {
+      if (!hasData && score==null) return emptyViz();
+      return this._conicDonut(score, color||'#2E7D32', max||100, 100, 14);
+    };
 
     // 동연령대: 100%→0%, 마커에 값 크게, 기준 그래프 하단 2줄
     // ── 동연령대 상위 분포도: 이미지1 참고 정규분포 히스토그램 ──
@@ -886,20 +907,23 @@ const AssessmentsPage = {
   },
 
   _renderMovement: function(area) {
-    // 하위탭 없이 3개 섹션 한 페이지에 표시
+    // ✅ 컨테이너 먼저 노출 후 각 섹션을 순차적으로 렌더링
     area.innerHTML = '<div id="move-ergo-area"></div><div id="move-everex-area" style="margin-top:20px;"></div><div id="move-fra-area" style="margin-top:20px;"></div>';
-    this._renderErgo(area.querySelector('#move-ergo-area'));
-    this._renderEverex(area.querySelector('#move-everex-area'));
-    this._renderFra(area.querySelector('#move-fra-area'));
-    // 전체 저장 버튼
     const canWrite = this._canWrite('movement');
-    if (canWrite) {
-      const allSaveDiv = document.createElement('div');
-      allSaveDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:2px solid var(--color-gray-200);';
-      allSaveDiv.innerHTML = `<button class="btn btn-primary" id="move-all-save-btn" style="min-width:160px;">전체 임시저장</button>`;
-      area.appendChild(allSaveDiv);
-      allSaveDiv.querySelector('#move-all-save-btn').addEventListener('click', () => this._saveMovementAll());
-    }
+
+    // ✅ 데이터 없으면 에르고만 즉시 렌더, 나머지는 다음 프레임에
+    this._renderErgo(area.querySelector('#move-ergo-area'));
+    requestAnimationFrame(() => {
+      this._renderEverex(area.querySelector('#move-everex-area'));
+      this._renderFra(area.querySelector('#move-fra-area'));
+      if (canWrite) {
+        const allSaveDiv = document.createElement('div');
+        allSaveDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:2px solid var(--color-gray-200);';
+        allSaveDiv.innerHTML = `<button class="btn btn-primary" id="move-all-save-btn" style="min-width:160px;">전체 임시저장</button>`;
+        area.appendChild(allSaveDiv);
+        allSaveDiv.querySelector('#move-all-save-btn').addEventListener('click', () => this._saveMovementAll());
+      }
+    });
   },
 
   _saveMovementAll: async function() {
@@ -1191,19 +1215,22 @@ const AssessmentsPage = {
   },
 
   _renderMetabolism: function(area) {
-    // 하위탭 없이 2개 섹션 한 페이지에 표시
+    // ✅ 컨테이너 먼저 노출 후 순차 렌더링
     area.innerHTML = '<div id="meta-inbody-area"></div><div id="meta-stress-area" style="margin-top:20px;"></div>';
-    this._renderInbody(area.querySelector('#meta-inbody-area'));
-    this._renderStress(area.querySelector('#meta-stress-area'));
-    // 전체 저장 버튼
     const canWrite = this._canWrite('metabolism');
-    if (canWrite) {
-      const allSaveDiv = document.createElement('div');
-      allSaveDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:2px solid var(--color-gray-200);';
-      allSaveDiv.innerHTML = `<button class="btn btn-primary" id="meta-all-save-btn" style="min-width:160px;">전체 임시저장</button>`;
-      area.appendChild(allSaveDiv);
-      allSaveDiv.querySelector('#meta-all-save-btn').addEventListener('click', () => this._saveMetabolismAll());
-    }
+
+    // ✅ 인바디 먼저 렌더, 스트레스는 다음 프레임에
+    this._renderInbody(area.querySelector('#meta-inbody-area'));
+    requestAnimationFrame(() => {
+      this._renderStress(area.querySelector('#meta-stress-area'));
+      if (canWrite) {
+        const allSaveDiv = document.createElement('div');
+        allSaveDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:2px solid var(--color-gray-200);';
+        allSaveDiv.innerHTML = `<button class="btn btn-primary" id="meta-all-save-btn" style="min-width:160px;">전체 임시저장</button>`;
+        area.appendChild(allSaveDiv);
+        allSaveDiv.querySelector('#meta-all-save-btn').addEventListener('click', () => this._saveMetabolismAll());
+      }
+    });
   },
 
   _saveMetabolismAll: async function() {
@@ -1488,10 +1515,9 @@ const AssessmentsPage = {
           await API.invalidateReport(this.selectedClient.clientId, this.activeRound);
           UI.toast('평가가 수정되었습니다. 통합 리포트를 다시 생성해주세요.', 'warning');
         } else {
-          UI.toast(res.data.message||'저장되었습니다.','success');
+          UI.toast(res.data?.message||'저장되었습니다.','success');
         }
-        const ir=await API.getInitialData();
-        if (ir.status==='success') { this.allClients=(ir.data.clients||[]).filter(c=>c.status==='입소중'); this.overview=ir.data.overview||{}; this._renderClientList(); }
+        // ✅ getInitialData 제거 — roundData만 갱신
         await this._loadRoundData();
       } else UI.toast(res.message||'저장 실패','error');
     } catch { UI.toast('서버 오류가 발생했습니다.','error'); }
@@ -1507,8 +1533,7 @@ const AssessmentsPage = {
       const res=await API.deleteSheetRow(this.selectedClient.clientId,this.activeRound,sheetType);
       if (res.status==='success') {
         UI.toast(res.data.message,'success');
-        const ir=await API.getInitialData();
-        if (ir.status==='success') { this.allClients=(ir.data.clients||[]).filter(c=>c.status==='입소중'); this.overview=ir.data.overview||{}; this._renderClientList(); }
+        // ✅ getInitialData 제거 — roundData만 갱신
         await this._loadRoundData();
       } else UI.toast(res.message||'삭제 실패','error');
     } catch { UI.toast('서버 오류가 발생했습니다.','error'); }

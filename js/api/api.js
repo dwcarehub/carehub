@@ -1,7 +1,10 @@
 // ============================================================
-// api/api.js - Supabase REST API 버전
-// Apps Script 백엔드를 Supabase PostgREST API로 완전 교체
-// 컬럼명은 config.js의 *_COLS 매핑을 사용
+// api/api.js - Supabase REST API 버전 (버그 수정)
+//
+// 수정사항:
+// 1. 한글 테이블명 encodeURIComponent 제거 → 그대로 사용
+// 2. 공백 포함 컬럼명 필터 쿼리 → encodeURIComponent 적용
+// 3. 캐시 TTL 유지
 // ============================================================
 
 const API = {
@@ -17,7 +20,6 @@ const API = {
     getAssessOverview:   60000,
     getStandards:       300000
   },
-  _key: (k) => k,
   _getCached: function(action, params) {
     const key = action + '_' + (params?.clientId||'') + '_' + (params?.round||'');
     const ttl = this._CACHE_TTL[action];
@@ -39,22 +41,39 @@ const API = {
   },
 
   // ── Supabase REST 헬퍼 ─────────────────────────────────────
-  _url: (table, query='') =>
-    `${AppConfig.SUPABASE_URL}/rest/v1/${encodeURIComponent(table)}${query ? '?' + query : ''}`,
+  // ★ 수정1: 테이블명은 encodeURIComponent 하지 않음
+  //   Supabase PostgREST는 한글 테이블명을 그대로 받음
+  _url: function(table, query) {
+    const base = `${AppConfig.SUPABASE_URL}/rest/v1/${table}`;
+    return query ? `${base}?${query}` : base;
+  },
 
-  _headers: () => ({
-    'Content-Type':  'application/json',
-    'apikey':        AppConfig.SUPABASE_ANON,
-    'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
-    'Prefer':        'return=representation'
-  }),
+  _headers: function() {
+    return {
+      'Content-Type':  'application/json',
+      'apikey':        AppConfig.SUPABASE_ANON,
+      'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
+      'Prefer':        'return=representation'
+    };
+  },
+
+  // ★ 수정2: 쿼리 파라미터에서 컬럼명·값 인코딩 처리
+  //   col=eq.val 형태에서 공백 있는 컬럼명을 안전하게 처리
+  _eq: function(col, val) {
+    // 컬럼명의 공백은 그대로 (PostgREST가 처리), 값만 인코딩
+    return `${col}=eq.${encodeURIComponent(val)}`;
+  },
 
   // GET (SELECT)
-  _get: async function(table, query='') {
-    const r = await fetch(this._url(table, query), { headers: this._headers() });
+  _get: async function(table, query) {
+    const url = this._url(table, query);
+    const r = await fetch(url, {
+      method: 'GET',
+      headers: this._headers()
+    });
     if (!r.ok) {
-      const err = await r.json().catch(()=>({}));
-      throw new Error(err.message || `HTTP ${r.status}`);
+      const err = await r.json().catch(() => ({}));
+      throw new Error((err.message || err.hint || `HTTP ${r.status} - ${r.statusText}`) + ` [table: ${table}]`);
     }
     return r.json();
   },
@@ -67,10 +86,12 @@ const API = {
       body: JSON.stringify(body)
     });
     if (!r.ok) {
-      const err = await r.json().catch(()=>({}));
-      throw new Error(err.message || `HTTP ${r.status}`);
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || err.hint || `HTTP ${r.status}`);
     }
-    return r.json();
+    // 204 No Content 처리
+    const text = await r.text();
+    return text ? JSON.parse(text) : [];
   },
 
   // PATCH (UPDATE)
@@ -81,10 +102,11 @@ const API = {
       body: JSON.stringify(body)
     });
     if (!r.ok) {
-      const err = await r.json().catch(()=>({}));
-      throw new Error(err.message || `HTTP ${r.status}`);
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || err.hint || `HTTP ${r.status}`);
     }
-    return r.json();
+    const text = await r.text();
+    return text ? JSON.parse(text) : [];
   },
 
   // DELETE
@@ -94,24 +116,19 @@ const API = {
       headers: { ...this._headers(), Prefer: 'return=minimal' }
     });
     if (!r.ok) {
-      const err = await r.json().catch(()=>({}));
-      throw new Error(err.message || `HTTP ${r.status}`);
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || err.hint || `HTTP ${r.status}`);
     }
   },
 
   // ── 날짜/유틸 ─────────────────────────────────────────────
   _now: () => new Date().toISOString(),
-  _today: () => {
-    const d = new Date();
-    const p = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
-  },
   _safeNum: (v) => {
     if (v === null || v === undefined || v === '') return null;
     const n = Number(v); return isNaN(n) ? null : n;
   },
   _safeStr: (v) => (v === null || v === undefined) ? '' : String(v),
-  _safeDateStr: (v) => {
+  _safeDateStr: function(v) {
     if (!v) return '';
     if (typeof v === 'string') return v.substring(0, 10);
     if (v instanceof Date) {
@@ -120,8 +137,7 @@ const API = {
     }
     return String(v).substring(0, 10);
   },
-
-  _calcEndDate: (admitDateStr, period) => {
+  _calcEndDate: function(admitDateStr, period) {
     const days = AppConfig.PERIOD_DAYS[period] || 0;
     if (!admitDateStr || !days) return '';
     const d = new Date(admitDateStr);
@@ -129,8 +145,7 @@ const API = {
     const p = n => String(n).padStart(2,'0');
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
   },
-
-  _calcClientStatus: (admitDateStr, endDateStr) => {
+  _calcClientStatus: function(admitDateStr, endDateStr) {
     const today = new Date(); today.setHours(0,0,0,0);
     const admit = admitDateStr ? new Date(admitDateStr) : null;
     const end   = endDateStr   ? new Date(endDateStr)   : null;
@@ -138,8 +153,7 @@ const API = {
     if (!end   || today > end)   return '퇴소';
     return '입소중';
   },
-
-  _calcCardioIndex: (score, gender, birthDate) => {
+  _calcCardioIndex: function(score, gender, birthDate) {
     if (score === null || score === undefined || isNaN(score) || !gender || !birthDate) return '';
     const age = new Date().getFullYear() - new Date(birthDate).getFullYear();
     const group = age <= 65 ? '60-65' : '66+';
@@ -148,10 +162,9 @@ const API = {
     const found = table.find(g => score >= g.min && score <= g.max);
     return found ? found.label.replace(/ \(.*\)/, '') : '';
   },
+  _generateId: () => 'ID' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,5).toUpperCase(),
 
-  _generateId: (prefix) => prefix + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,5).toUpperCase(),
-
-  // ── 클라이언트 행 → JS 객체 변환 ──────────────────────────
+  // ── 행 → JS 객체 변환 ─────────────────────────────────────
   _rowToClient: function(row) {
     const c = AppConfig.CLIENT_COLS;
     const admitDate = this._safeDateStr(row[c.ADMIT_DATE]);
@@ -222,7 +235,6 @@ const API = {
       createdAt:     this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToErgo: function(row) {
     const c = AppConfig.ERGO_COLS;
     return {
@@ -235,7 +247,6 @@ const API = {
       createdAt:   this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToEverex: function(row) {
     const c = AppConfig.EVEREX_COLS;
     return {
@@ -247,7 +258,6 @@ const API = {
       createdAt:         this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToFra: function(row) {
     const c = AppConfig.FRA_COLS;
     return {
@@ -261,7 +271,6 @@ const API = {
       createdAt:    this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToInbody: function(row) {
     const c = AppConfig.INBODY_COLS;
     return {
@@ -273,7 +282,6 @@ const API = {
       createdAt:     this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToStress: function(row) {
     const c = AppConfig.STRESS_COLS;
     return {
@@ -285,7 +293,6 @@ const API = {
       createdAt:   this._safeStr(row[c.CREATED_AT])
     };
   },
-
   _rowToComment: function(row) {
     const c = AppConfig.COMMENT_COLS;
     return {
@@ -303,7 +310,7 @@ const API = {
   },
 
   // ============================================================
-  // ── 사용자 API ────────────────────────────────────────────
+  // ── 사용자 API ─────────────────────────────────────────────
   // ============================================================
 
   login: async function(id, pw) {
@@ -316,13 +323,14 @@ const API = {
       if (row[c.PASSWORD] !== pw) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
       if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
       const now = this._now();
-      // lastLogin 비동기 업데이트 (로그인 블로킹 없음)
-      this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`, { [c.LAST_LOGIN]: now }).catch(()=>{});
-      return { status:'success', data: {
-        userId: row[c.USER_ID], loginId: row[c.LOGIN_ID],
-        name: row[c.NAME], role: row[c.ROLE],
-        status: row[c.STATUS], lastLogin: now
-      }};
+      this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`, { [c.LAST_LOGIN]: now }).catch(() => {});
+      return {
+        status: 'success', data: {
+          userId: row[c.USER_ID], loginId: row[c.LOGIN_ID],
+          name: row[c.NAME], role: row[c.ROLE],
+          status: row[c.STATUS], lastLogin: now
+        }
+      };
     } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
   },
 
@@ -330,11 +338,13 @@ const API = {
     try {
       const c = AppConfig.USER_COLS;
       const rows = await this._get(AppConfig.TABLES.USERS, `select=*&order=${c.CREATED_AT}.asc`);
-      return { status:'success', data: { users: rows.map(r => ({
-        userId: r[c.USER_ID], loginId: r[c.LOGIN_ID], name: r[c.NAME],
-        role: r[c.ROLE], status: r[c.STATUS],
-        createdAt: r[c.CREATED_AT], lastLogin: r[c.LAST_LOGIN]
-      })) }};
+      return {
+        status:'success', data: { users: rows.map(r => ({
+          userId: r[c.USER_ID], loginId: r[c.LOGIN_ID], name: r[c.NAME],
+          role: r[c.ROLE], status: r[c.STATUS],
+          createdAt: r[c.CREATED_AT], lastLogin: r[c.LAST_LOGIN]
+        })) }
+      };
     } catch(e) { return { status:'error', message:'사용자 목록 조회 오류: ' + e.message }; }
   },
 
@@ -342,10 +352,9 @@ const API = {
     try {
       const c = AppConfig.USER_COLS;
       const T = AppConfig.TABLES.USERS;
-      // loginId 중복 확인
       const exists = await this._get(T, `${c.LOGIN_ID}=eq.${encodeURIComponent(d.loginId)}&limit=1`);
       if (exists.length) return { status:'error', message:'이미 사용 중인 아이디입니다.' };
-      const userId = this._generateId('U');
+      const userId = this._generateId();
       const now = this._now();
       await this._post(T, {
         [c.USER_ID]: userId, [c.LOGIN_ID]: d.loginId,
@@ -353,7 +362,7 @@ const API = {
         [c.ROLE]: d.role, [c.STATUS]: d.status,
         [c.CREATED_AT]: now, [c.LAST_LOGIN]: ''
       });
-      return { status:'success', data: { userId, loginId: d.loginId, name: d.name, role: d.role, status: d.status, createdAt: now }};
+      return { status:'success', data: { userId, loginId: d.loginId, name: d.name, role: d.role, status: d.status, createdAt: now } };
     } catch(e) { return { status:'error', message:'사용자 등록 오류: ' + e.message }; }
   },
 
@@ -364,7 +373,7 @@ const API = {
       if (fields.role   !== undefined) update[c.ROLE]   = fields.role;
       if (fields.status !== undefined) update[c.STATUS] = fields.status;
       await this._patch(AppConfig.TABLES.USERS, `${c.USER_ID}=eq.${encodeURIComponent(tid)}`, update);
-      return { status:'success', data: { message:'사용자 정보가 수정되었습니다.' }};
+      return { status:'success', data: { message:'사용자 정보가 수정되었습니다.' } };
     } catch(e) { return { status:'error', message:'사용자 수정 오류: ' + e.message }; }
   },
 
@@ -372,7 +381,7 @@ const API = {
     try {
       const c = AppConfig.USER_COLS;
       await this._delete(AppConfig.TABLES.USERS, `${c.USER_ID}=eq.${encodeURIComponent(tid)}`);
-      return { status:'success', data: { message:'사용자가 삭제되었습니다.' }};
+      return { status:'success', data: { message:'사용자가 삭제되었습니다.' } };
     } catch(e) { return { status:'error', message:'사용자 삭제 오류: ' + e.message }; }
   },
 
@@ -387,7 +396,7 @@ const API = {
       if (nw.length < 6) return { status:'error', message:'비밀번호는 6자 이상이어야 합니다.' };
       if (cur === nw)    return { status:'error', message:'새 비밀번호는 현재 비밀번호와 달라야 합니다.' };
       await this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(user.userId)}`, { [c.PASSWORD]: nw });
-      return { status:'success', data: { message:'비밀번호가 변경되었습니다.' }};
+      return { status:'success', data: { message:'비밀번호가 변경되었습니다.' } };
     } catch(e) { return { status:'error', message:'비밀번호 변경 오류: ' + e.message }; }
   },
 
@@ -396,27 +405,25 @@ const API = {
       const c = AppConfig.USER_COLS;
       await this._patch(AppConfig.TABLES.USERS, `${c.USER_ID}=eq.${encodeURIComponent(tid)}`,
         { [c.PASSWORD]: AppConfig.DEFAULT_PASSWORD });
-      return { status:'success', data: { message:`비밀번호가 초기화되었습니다. 초기 비밀번호: ${AppConfig.DEFAULT_PASSWORD}` }};
+      return { status:'success', data: { message:`비밀번호가 초기화되었습니다. 초기 비밀번호: ${AppConfig.DEFAULT_PASSWORD}` } };
     } catch(e) { return { status:'error', message:'비밀번호 초기화 오류: ' + e.message }; }
   },
 
   // ============================================================
-  // ── 고객 API ──────────────────────────────────────────────
+  // ── 고객 API ───────────────────────────────────────────────
   // ============================================================
 
   getClients: async function() {
-    const cacheKey = 'getClients';
     const cached = this._getCached('getClients', {});
     if (cached) return { status:'success', data: cached };
     try {
-      const [clientRows, masterRows] = await Promise.all([
-        this._get(AppConfig.TABLES.CLIENTS, `select=*&order=${AppConfig.CLIENT_COLS.CLIENT_ID}.asc`),
-        this._get(AppConfig.TABLES.ASSESS_MASTER,
-          `select=${AppConfig.MASTER_COLS.CLIENT_ID},${AppConfig.MASTER_COLS.ROUND},${AppConfig.MASTER_COLS.REPORT_GENERATED}`)
-      ]);
-      // doneRounds: 리포트 생성된 최대 회차
-      const doneMap = {};
+      const cc = AppConfig.CLIENT_COLS;
       const mc = AppConfig.MASTER_COLS;
+      const [clientRows, masterRows] = await Promise.all([
+        this._get(AppConfig.TABLES.CLIENTS,       `select=*&order=${cc.CLIENT_ID}.asc`),
+        this._get(AppConfig.TABLES.ASSESS_MASTER, `select=${mc.CLIENT_ID},${mc.ROUND},${mc.REPORT_GENERATED}`)
+      ]);
+      const doneMap = {};
       masterRows.forEach(r => {
         if (!r[mc.REPORT_GENERATED]) return;
         const cid = r[mc.CLIENT_ID], rnd = Number(r[mc.ROUND] || 0);
@@ -427,7 +434,7 @@ const API = {
         c.doneRounds = doneMap[c.clientId] || 0;
         return c;
       });
-      const result = { status:'success', data: { clients }};
+      const result = { status:'success', data: { clients } };
       this._setCache('getClients', {}, result);
       return result;
     } catch(e) { return { status:'error', message:'고객 목록 조회 오류: ' + e.message }; }
@@ -435,19 +442,18 @@ const API = {
 
   getClientDetail: async function(cid) {
     try {
-      const c = AppConfig.CLIENT_COLS;
-      const rows = await this._get(AppConfig.TABLES.CLIENTS,
-        `${c.CLIENT_ID}=eq.${encodeURIComponent(cid)}&limit=1`);
+      const cc = AppConfig.CLIENT_COLS;
+      const mc = AppConfig.MASTER_COLS;
+      const [rows, masterRows] = await Promise.all([
+        this._get(AppConfig.TABLES.CLIENTS,       `${cc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&limit=1`),
+        this._get(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&select=${mc.ROUND},${mc.REPORT_GENERATED}`)
+      ]);
       if (!rows.length) return { status:'error', message:'고객을 찾을 수 없습니다.' };
       const client = this._rowToClient(rows[0]);
-      // doneRounds
-      const mc = AppConfig.MASTER_COLS;
-      const masterRows = await this._get(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&select=${mc.ROUND},${mc.REPORT_GENERATED}`);
       let maxDone = 0;
-      masterRows.forEach(r => { if (r[mc.REPORT_GENERATED]) { const rnd = Number(r[mc.ROUND]||0); if (rnd > maxDone) maxDone = rnd; }});
+      masterRows.forEach(r => { if (r[mc.REPORT_GENERATED]) { const rnd = Number(r[mc.ROUND]||0); if (rnd > maxDone) maxDone = rnd; } });
       client.doneRounds = maxDone;
-      return { status:'success', data: { client }};
+      return { status:'success', data: { client } };
     } catch(e) { return { status:'error', message:'고객 상세 조회 오류: ' + e.message }; }
   },
 
@@ -461,16 +467,16 @@ const API = {
       const totalRounds = AppConfig.PERIOD_ROUNDS[d.admitPeriod] || 0;
       const status      = this._calcClientStatus(d.admitDate, endDate);
       await this._post(T, {
-        [c.CLIENT_ID]:    d.clientId,   [c.NAME]:         d.name,
-        [c.BIRTH_DATE]:   d.birthDate,  [c.GENDER]:       d.gender,
-        [c.PHONE]:        d.phone,      [c.FIRST_VISIT]:  d.firstVisit,
-        [c.ADMIT_DATE]:   d.admitDate,  [c.ADMIT_PERIOD]: d.admitPeriod,
-        [c.END_DATE]:     endDate,      [c.TOTAL_ROUNDS]: totalRounds,
-        [c.DONE_ROUNDS]:  0,            [c.STATUS]:       status,
-        [c.ROOM_NUM]:     d.roomNum||'', [c.NOTE]:        d.note||''
+        [c.CLIENT_ID]:    d.clientId,    [c.NAME]:         d.name,
+        [c.BIRTH_DATE]:   d.birthDate,   [c.GENDER]:       d.gender,
+        [c.PHONE]:        d.phone,       [c.FIRST_VISIT]:  d.firstVisit,
+        [c.ADMIT_DATE]:   d.admitDate,   [c.ADMIT_PERIOD]: d.admitPeriod,
+        [c.END_DATE]:     endDate,       [c.TOTAL_ROUNDS]: totalRounds,
+        [c.DONE_ROUNDS]:  0,             [c.STATUS]:       status,
+        [c.ROOM_NUM]:     d.roomNum||'', [c.NOTE]:         d.note||''
       });
       this._bust('getClients','getClientDetail','getInitialData');
-      return { status:'success', data: { clientId: d.clientId, name: d.name, status, endDate, totalRounds, doneRounds: 0 }};
+      return { status:'success', data: { clientId: d.clientId, name: d.name, status, endDate, totalRounds, doneRounds: 0 } };
     } catch(e) { return { status:'error', message:'고객 등록 오류: ' + e.message }; }
   },
 
@@ -485,14 +491,13 @@ const API = {
       const existDone = rows.length ? Number(rows[0][c.DONE_ROUNDS] || 0) : 0;
       const doneRounds = Math.min(existDone, totalRounds);
       const update = {
-        [c.NAME]: d.name,       [c.BIRTH_DATE]:   d.birthDate,
-        [c.GENDER]: d.gender,   [c.PHONE]:        d.phone,
+        [c.NAME]: d.name,           [c.BIRTH_DATE]:   d.birthDate,
+        [c.GENDER]: d.gender,       [c.PHONE]:        d.phone,
         [c.FIRST_VISIT]: d.firstVisit, [c.ADMIT_DATE]: d.admitDate,
         [c.ADMIT_PERIOD]: d.admitPeriod, [c.END_DATE]:  endDate,
         [c.TOTAL_ROUNDS]: totalRounds,   [c.DONE_ROUNDS]: doneRounds,
         [c.STATUS]: status, [c.ROOM_NUM]: d.roomNum||'', [c.NOTE]: d.note||''
       };
-      const targetId = d.newClientId && d.newClientId !== d.clientId ? d.newClientId : d.clientId;
       if (d.newClientId && d.newClientId !== d.clientId) {
         const dup = await this._get(T, `${c.CLIENT_ID}=eq.${encodeURIComponent(d.newClientId)}&limit=1`);
         if (dup.length) return { status:'error', message:'이미 사용 중인 고객 ID입니다.' };
@@ -500,7 +505,7 @@ const API = {
       }
       await this._patch(T, `${c.CLIENT_ID}=eq.${encodeURIComponent(d.clientId)}`, update);
       this._bust('getClients','getClientDetail','getInitialData');
-      return { status:'success', data: { message:'고객 정보가 수정되었습니다.', status, endDate, totalRounds }};
+      return { status:'success', data: { message:'고객 정보가 수정되었습니다.', status, endDate, totalRounds } };
     } catch(e) { return { status:'error', message:'고객 수정 오류: ' + e.message }; }
   },
 
@@ -509,7 +514,7 @@ const API = {
       const c = AppConfig.CLIENT_COLS;
       await this._delete(AppConfig.TABLES.CLIENTS, `${c.CLIENT_ID}=eq.${encodeURIComponent(cid)}`);
       this._bust('getClients','getClientDetail','getClientMasterList','getInitialData');
-      return { status:'success', data: { message:'고객이 삭제되었습니다.' }};
+      return { status:'success', data: { message:'고객이 삭제되었습니다.' } };
     } catch(e) { return { status:'error', message:'고객 삭제 오류: ' + e.message }; }
   },
 
@@ -517,33 +522,30 @@ const API = {
     try {
       const c = AppConfig.CLIENT_COLS;
       const rows = await this._get(AppConfig.TABLES.CLIENTS, `select=${c.CLIENT_ID},${c.ADMIT_DATE},${c.END_DATE}`);
-      await Promise.all(rows.map(row => {
-        const newStatus = this._calcClientStatus(
-          this._safeDateStr(row[c.ADMIT_DATE]),
-          this._safeDateStr(row[c.END_DATE])
-        );
-        return this._patch(AppConfig.TABLES.CLIENTS,
+      await Promise.all(rows.map(row =>
+        this._patch(AppConfig.TABLES.CLIENTS,
           `${c.CLIENT_ID}=eq.${encodeURIComponent(row[c.CLIENT_ID])}`,
-          { [c.STATUS]: newStatus });
-      }));
+          { [c.STATUS]: this._calcClientStatus(this._safeDateStr(row[c.ADMIT_DATE]), this._safeDateStr(row[c.END_DATE])) })
+      ));
       this._bust('getClients','getInitialData');
-      return { status:'success', data: { message:`${rows.length}명 상태 업데이트 완료` }};
+      return { status:'success', data: { message:`${rows.length}명 상태 업데이트 완료` } };
     } catch(e) { return { status:'error', message:'상태 업데이트 오류: ' + e.message }; }
   },
 
   // ============================================================
-  // ── 평가 API (조회) ────────────────────────────────────────
+  // ── 평가 조회 API ──────────────────────────────────────────
   // ============================================================
 
   getInitialData: async function() {
     const cached = this._getCached('getInitialData', {});
     if (cached) return { status:'success', data: cached };
     try {
+      const cc = AppConfig.CLIENT_COLS;
+      const mc = AppConfig.MASTER_COLS;
       const [clientRows, masterRows] = await Promise.all([
-        this._get(AppConfig.TABLES.CLIENTS, `select=*&order=${AppConfig.CLIENT_COLS.CLIENT_ID}.asc`),
+        this._get(AppConfig.TABLES.CLIENTS,       `select=*&order=${cc.CLIENT_ID}.asc`),
         this._get(AppConfig.TABLES.ASSESS_MASTER, `select=*`)
       ]);
-      const mc = AppConfig.MASTER_COLS;
       const overview = {}, doneByClient = {};
       masterRows.forEach(row => {
         const cid   = this._safeStr(row[mc.CLIENT_ID]);
@@ -570,11 +572,10 @@ const API = {
         c.doneRounds = doneByClient[c.clientId] || 0;
         return c;
       });
-      const result = { status:'success', data: { clients, overview }};
-      this._setCache('getInitialData', {}, result);
-      // getClients / getAssessOverview 캐시도 공유
-      this._setCache('getClients', {}, { status:'success', data: { clients }});
-      this._setCache('getAssessOverview', {}, { status:'success', data: { overview }});
+      const result = { status:'success', data: { clients, overview } };
+      this._setCache('getInitialData',    {}, result);
+      this._setCache('getClients',        {}, { status:'success', data: { clients } });
+      this._setCache('getAssessOverview', {}, { status:'success', data: { overview } });
       return result;
     } catch(e) { return { status:'error', message:'초기 데이터 조회 오류: ' + e.message }; }
   },
@@ -603,7 +604,7 @@ const API = {
           reportCreatedAt: this._safeStr(row[mc.REPORT_CREATED_AT])
         };
       });
-      const result = { status:'success', data: { overview }};
+      const result = { status:'success', data: { overview } };
       this._setCache('getAssessOverview', {}, result);
       return result;
     } catch(e) { return { status:'error', message:'평가 현황 조회 오류: ' + e.message }; }
@@ -615,7 +616,7 @@ const API = {
       const cc = AppConfig.COG_COLS;
       const [masterRows, cogRows] = await Promise.all([
         this._get(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&select=*&order=${mc.ROUND}.asc`),
-        this._get(AppConfig.TABLES.COGNITIVE, `${cc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&select=${cc.ROUND},${cc.SPATIAL},${cc.MEMORY}`)
+        this._get(AppConfig.TABLES.COGNITIVE,     `${cc.CLIENT_ID}=eq.${encodeURIComponent(cid)}&select=${cc.ROUND},${cc.SPATIAL},${cc.MEMORY}`)
       ]);
       const cogByRound = {};
       cogRows.forEach(r => { cogByRound[Number(r[cc.ROUND])] = r; });
@@ -625,25 +626,27 @@ const API = {
         if (cogRow) { m.spatial = this._safeNum(cogRow[cc.SPATIAL]); m.memory = this._safeNum(cogRow[cc.MEMORY]); }
         return m;
       });
-      return { status:'success', data: { masterList }};
+      return { status:'success', data: { masterList } };
     } catch(e) { return { status:'error', message:'Master 목록 조회 오류: ' + e.message }; }
   },
 
   getRoundData: async function(cid, round) {
     try {
-      const mc = AppConfig.MASTER_COLS;
-      const cc = AppConfig.COG_COLS;
       const enc = encodeURIComponent;
+      const mc = AppConfig.MASTER_COLS; const cc = AppConfig.COG_COLS;
+      const ec = AppConfig.ERGO_COLS;   const xc = AppConfig.EVEREX_COLS;
+      const fc = AppConfig.FRA_COLS;    const ic = AppConfig.INBODY_COLS;
+      const sc = AppConfig.STRESS_COLS; const cmc = AppConfig.COMMENT_COLS;
 
-      const [masterRows, cogRows, ergoRows, everexRows, fraRows, inbodyRows, stressRows, commentRows] = await Promise.all([
+      const [masterRows,cogRows,ergoRows,everexRows,fraRows,inbodyRows,stressRows,commentRows] = await Promise.all([
         this._get(AppConfig.TABLES.ASSESS_MASTER,       `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.COGNITIVE,           `${cc.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.COG_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.MOVEMENT_ERGO,       `${AppConfig.ERGO_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.ERGO_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.MOVEMENT_EVEREX,     `${AppConfig.EVEREX_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.EVEREX_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${AppConfig.FRA_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.FRA_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.METABOLISM_INBODY,   `${AppConfig.INBODY_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.INBODY_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.METABOLISM_STRESS,   `${AppConfig.STRESS_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.STRESS_COLS.ROUND}=eq.${round}&limit=1`),
-        this._get(AppConfig.TABLES.COMMENT,             `${AppConfig.COMMENT_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.COMMENT_COLS.ROUND}=eq.${round}&limit=1`)
+        this._get(AppConfig.TABLES.COGNITIVE,           `${cc.CLIENT_ID}=eq.${enc(cid)}&${cc.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.MOVEMENT_ERGO,       `${ec.CLIENT_ID}=eq.${enc(cid)}&${ec.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.MOVEMENT_EVEREX,     `${xc.CLIENT_ID}=eq.${enc(cid)}&${xc.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${fc.CLIENT_ID}=eq.${enc(cid)}&${fc.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.METABOLISM_INBODY,   `${ic.CLIENT_ID}=eq.${enc(cid)}&${ic.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.METABOLISM_STRESS,   `${sc.CLIENT_ID}=eq.${enc(cid)}&${sc.ROUND}=eq.${round}&limit=1`),
+        this._get(AppConfig.TABLES.COMMENT,             `${cmc.CLIENT_ID}=eq.${enc(cid)}&${cmc.ROUND}=eq.${round}&limit=1`)
       ]);
 
       const masterData = masterRows.length ? this._rowToMaster(masterRows[0]) : null;
@@ -651,42 +654,45 @@ const API = {
         masterData.spatial = this._safeNum(cogRows[0][cc.SPATIAL]);
         masterData.memory  = this._safeNum(cogRows[0][cc.MEMORY]);
       }
-
       return { status:'success', data: {
         master:    masterData,
-        cognitive: cogRows.length    ? this._rowToCognitive(cogRows[0])   : null,
-        ergo:      ergoRows.length   ? this._rowToErgo(ergoRows[0])       : null,
-        everex:    everexRows.length ? this._rowToEverex(everexRows[0])   : null,
-        fra:       fraRows.length    ? this._rowToFra(fraRows[0])         : null,
-        inbody:    inbodyRows.length ? this._rowToInbody(inbodyRows[0])   : null,
-        stress:    stressRows.length ? this._rowToStress(stressRows[0])   : null,
-        comment:   commentRows.length? this._rowToComment(commentRows[0]) : null
+        cognitive: cogRows.length    ? this._rowToCognitive(cogRows[0])    : null,
+        ergo:      ergoRows.length   ? this._rowToErgo(ergoRows[0])        : null,
+        everex:    everexRows.length ? this._rowToEverex(everexRows[0])    : null,
+        fra:       fraRows.length    ? this._rowToFra(fraRows[0])          : null,
+        inbody:    inbodyRows.length ? this._rowToInbody(inbodyRows[0])    : null,
+        stress:    stressRows.length ? this._rowToStress(stressRows[0])    : null,
+        comment:   commentRows.length? this._rowToComment(commentRows[0])  : null
       }};
     } catch(e) { return { status:'error', message:'회차 데이터 조회 오류: ' + e.message }; }
   },
 
-  // ── done 플래그 재계산 + Master PATCH ──────────────────────
+  // ── done 플래그 재계산 ─────────────────────────────────────
   _refreshMasterFlags: async function(cid, round) {
     const enc = encodeURIComponent;
-    const [cogRows, ergoRows, everexRows, fraRows, inbodyRows, stressRows, commentRows] = await Promise.all([
-      this._get(AppConfig.TABLES.COGNITIVE,           `${AppConfig.COG_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.COG_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.MOVEMENT_ERGO,       `${AppConfig.ERGO_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.ERGO_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.MOVEMENT_EVEREX,     `${AppConfig.EVEREX_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.EVEREX_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${AppConfig.FRA_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.FRA_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.METABOLISM_INBODY,   `${AppConfig.INBODY_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.INBODY_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.METABOLISM_STRESS,   `${AppConfig.STRESS_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.STRESS_COLS.ROUND}=eq.${round}&limit=1`),
-      this._get(AppConfig.TABLES.COMMENT,             `${AppConfig.COMMENT_COLS.CLIENT_ID}=eq.${enc(cid)}&${AppConfig.COMMENT_COLS.ROUND}=eq.${round}&limit=1`)
+    const mc  = AppConfig.MASTER_COLS;
+    const cc  = AppConfig.COG_COLS;  const ec  = AppConfig.ERGO_COLS;
+    const xc  = AppConfig.EVEREX_COLS; const fc = AppConfig.FRA_COLS;
+    const ic  = AppConfig.INBODY_COLS; const sc = AppConfig.STRESS_COLS;
+    const cmc = AppConfig.COMMENT_COLS;
+
+    const [cogR,ergoR,evxR,fraR,inbR,strR,cmtR] = await Promise.all([
+      this._get(AppConfig.TABLES.COGNITIVE,           `${cc.CLIENT_ID}=eq.${enc(cid)}&${cc.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.MOVEMENT_ERGO,       `${ec.CLIENT_ID}=eq.${enc(cid)}&${ec.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.MOVEMENT_EVEREX,     `${xc.CLIENT_ID}=eq.${enc(cid)}&${xc.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${fc.CLIENT_ID}=eq.${enc(cid)}&${fc.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.METABOLISM_INBODY,   `${ic.CLIENT_ID}=eq.${enc(cid)}&${ic.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.METABOLISM_STRESS,   `${sc.CLIENT_ID}=eq.${enc(cid)}&${sc.ROUND}=eq.${round}&limit=1`),
+      this._get(AppConfig.TABLES.COMMENT,             `${cmc.CLIENT_ID}=eq.${enc(cid)}&${cmc.ROUND}=eq.${round}&limit=1`)
     ]);
-    const cmtRow = commentRows[0];
-    const cc = AppConfig.COMMENT_COLS;
-    const mc = AppConfig.MASTER_COLS;
+    const cmRow = cmtR[0];
     const flags = {
-      [mc.COGNITIVE_DONE]:  cogRows.length > 0,
-      [mc.MOVEMENT_DONE]:   ergoRows.length > 0 && everexRows.length > 0 && fraRows.length > 0,
-      [mc.METABOLISM_DONE]: inbodyRows.length > 0 && stressRows.length > 0,
-      [mc.COMMENT_DONE]:    cmtRow ? !!(cmtRow[cc.COG_COMMENT] || cmtRow[cc.EX_COMMENT] || cmtRow[cc.CM_COMMENT]) : false
+      [mc.COGNITIVE_DONE]:  cogR.length > 0,
+      [mc.MOVEMENT_DONE]:   ergoR.length > 0 && evxR.length > 0 && fraR.length > 0,
+      [mc.METABOLISM_DONE]: inbR.length > 0 && strR.length > 0,
+      [mc.COMMENT_DONE]:    cmRow ? !!(cmRow[cmc.COG_COMMENT] || cmRow[cmc.EX_COMMENT] || cmRow[cmc.CM_COMMENT]) : false
     };
-    // Master upsert
+    // Master가 없으면 생성
     const existing = await this._get(AppConfig.TABLES.ASSESS_MASTER,
       `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`);
     if (existing.length) {
@@ -694,238 +700,193 @@ const API = {
         `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`, flags);
     } else {
       await this._post(AppConfig.TABLES.ASSESS_MASTER, {
-        [mc.REPORT_ID]: this._generateId('R'),
-        [mc.CLIENT_ID]: String(cid), [mc.ROUND]: Number(round),
-        [mc.CREATED_AT]: this._now(),
-        ...flags
+        [mc.REPORT_ID]:  this._generateId(),
+        [mc.CLIENT_ID]:  String(cid), [mc.ROUND]: Number(round),
+        [mc.CREATED_AT]: this._now(), ...flags
       });
     }
     return flags;
   },
 
   // ============================================================
-  // ── 평가 저장 API ─────────────────────────────────────────
+  // ── 평가 저장 API ──────────────────────────────────────────
   // ============================================================
 
   saveCognitive: async function(cid, round, d) {
     try {
-      const c = AppConfig.COG_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.COG_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const n = v => (v !== null && v !== undefined && v !== '') ? Number(v) : null;
       const row = {
-        [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''), [c.ROUND]: Number(round),
+        [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
+        [c.ROUND]: Number(round),
         [c.COG_SCORE]: n(d.cogScore), [c.SPATIAL]: n(d.spatial), [c.MEMORY]: n(d.memory),
         [c.AGE_PERCENTILE]: n(d.agePercentile), [c.DEPRESSION]: n(d.depression),
         [c.DEMENTIA_RISK]: n(d.dementiaRisk), [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.COGNITIVE,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.COGNITIVE, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.COGNITIVE, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.COGNITIVE, { [c.ASSESS_ID]: this._generateId('COG'), ...row });
+        await this._post(AppConfig.TABLES.COGNITIVE, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
-      // Master 점수 + 플래그 업데이트
-      const masterPatch = {
-        [mc.COG_SCORE]: n(d.cogScore), [mc.AGE_PERCENTILE]: n(d.agePercentile),
-        [mc.DEPRESSION]: n(d.depression), [mc.DEMENTIA_RISK]: n(d.dementiaRisk)
-      };
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
-        { ...masterPatch, ...flags });
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`, {
+        [mc.COG_SCORE]: n(d.cogScore), [mc.AGE_PERCENTILE]: n(d.agePercentile),
+        [mc.DEPRESSION]: n(d.depression), [mc.DEMENTIA_RISK]: n(d.dementiaRisk), ...flags
+      });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'인지평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'인지평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'인지평가 저장 오류: ' + e.message }; }
   },
 
   saveErgo: async function(cid, round, d) {
     try {
-      const c = AppConfig.ERGO_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.ERGO_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const cardioIndex = this._calcCardioIndex(Number(d.cardioScore), d.gender, d.birthDate);
       const row = {
         [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
         [c.ROUND]: Number(round), [c.CARDIO_SCORE]: Number(d.cardioScore),
         [c.CARDIO_INDEX]: cardioIndex, [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.MOVEMENT_ERGO,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.MOVEMENT_ERGO, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.MOVEMENT_ERGO, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.MOVEMENT_ERGO, { [c.ASSESS_ID]: this._generateId('ERG'), ...row });
+        await this._post(AppConfig.TABLES.MOVEMENT_ERGO, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
-      const masterPatch = { [mc.CARDIO_SCORE]: Number(d.cardioScore), [mc.CARDIO_INDEX]: cardioIndex };
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
-        { ...masterPatch, ...flags });
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+        { [mc.CARDIO_SCORE]: Number(d.cardioScore), [mc.CARDIO_INDEX]: cardioIndex, ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'에르고미터 평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'에르고미터 평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'에르고미터 저장 오류: ' + e.message }; }
   },
 
   saveEverex: async function(cid, round, d) {
     try {
-      const c = AppConfig.EVEREX_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.EVEREX_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const row = {
         [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
-        [c.ROUND]: Number(round), [c.BODY_MOVEMENT_INDEX]: Number(d.bodyMovementIndex),
-        [c.CREATED_AT]: now
+        [c.ROUND]: Number(round), [c.BODY_MOVEMENT_INDEX]: Number(d.bodyMovementIndex), [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.MOVEMENT_EVEREX,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.MOVEMENT_EVEREX, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.MOVEMENT_EVEREX, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.MOVEMENT_EVEREX, { [c.ASSESS_ID]: this._generateId('EVX'), ...row });
+        await this._post(AppConfig.TABLES.MOVEMENT_EVEREX, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
         { [mc.BODY_MOVEMENT_INDEX]: Number(d.bodyMovementIndex), ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'에버엑스 평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'에버엑스 평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'에버엑스 저장 오류: ' + e.message }; }
   },
 
   saveFra: async function(cid, round, d) {
     try {
-      const c = AppConfig.FRA_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.FRA_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const n = v => (v !== null && v !== undefined && v !== '') ? Number(v) : null;
       const row = {
         [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
         [c.ROUND]: Number(round), [c.NERVOUS_SCORE]: n(d.nervousScore),
-        [c.BALANCE_SCORE]: n(d.balanceScore), [c.SENSORY_SCORE]: n(d.sensoryScore),
-        [c.CREATED_AT]: now
+        [c.BALANCE_SCORE]: n(d.balanceScore), [c.SENSORY_SCORE]: n(d.sensoryScore), [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.MOVEMENT_INBODY_FRA, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.MOVEMENT_INBODY_FRA, { [c.ASSESS_ID]: this._generateId('FRA'), ...row });
+        await this._post(AppConfig.TABLES.MOVEMENT_INBODY_FRA, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
-      const masterPatch = { [mc.NERVOUS_SCORE]: n(d.nervousScore), [mc.BALANCE_SCORE]: n(d.balanceScore), [mc.SENSORY_SCORE]: n(d.sensoryScore) };
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
-        { ...masterPatch, ...flags });
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+        { [mc.NERVOUS_SCORE]: n(d.nervousScore), [mc.BALANCE_SCORE]: n(d.balanceScore), [mc.SENSORY_SCORE]: n(d.sensoryScore), ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'인바디FRA 평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'인바디FRA 평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'인바디FRA 저장 오류: ' + e.message }; }
   },
 
   saveInbody: async function(cid, round, d) {
     try {
-      const c = AppConfig.INBODY_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.INBODY_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const row = {
         [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
-        [c.ROUND]: Number(round), [c.BODY_COMP_SCORE]: Number(d.bodyCompScore),
-        [c.CREATED_AT]: now
+        [c.ROUND]: Number(round), [c.BODY_COMP_SCORE]: Number(d.bodyCompScore), [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.METABOLISM_INBODY,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.METABOLISM_INBODY, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.METABOLISM_INBODY, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.METABOLISM_INBODY, { [c.ASSESS_ID]: this._generateId('INB'), ...row });
+        await this._post(AppConfig.TABLES.METABOLISM_INBODY, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
         { [mc.BODY_COMP_SCORE]: Number(d.bodyCompScore), ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'인바디(체성분) 평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'인바디(체성분) 평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'인바디 저장 오류: ' + e.message }; }
   },
 
   saveStress: async function(cid, round, d) {
     try {
-      const c = AppConfig.STRESS_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
-      const now = this._now();
+      const c = AppConfig.STRESS_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const row = {
         [c.CLIENT_ID]: String(cid), [c.MEASURE_DATE]: String(d.measureDate||''),
-        [c.ROUND]: Number(round), [c.STRESS_SCORE]: Number(d.stressScore),
-        [c.CREATED_AT]: now
+        [c.ROUND]: Number(round), [c.STRESS_SCORE]: Number(d.stressScore), [c.CREATED_AT]: now
       };
-      const existing = await this._get(AppConfig.TABLES.METABOLISM_STRESS,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
+      const existing = await this._get(AppConfig.TABLES.METABOLISM_STRESS, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       if (existing.length) {
         await this._patch(AppConfig.TABLES.METABOLISM_STRESS, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, row);
       } else {
-        await this._post(AppConfig.TABLES.METABOLISM_STRESS, { [c.ASSESS_ID]: this._generateId('STR'), ...row });
+        await this._post(AppConfig.TABLES.METABOLISM_STRESS, { [c.ASSESS_ID]: this._generateId(), ...row });
       }
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
         { [mc.STRESS_SCORE]: Number(d.stressScore), ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'스트레스 평가가 저장되었습니다.' }};
+      return { status:'success', data: { message:'스트레스 평가가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'스트레스 저장 오류: ' + e.message }; }
   },
 
   saveComment: async function(cid, round, d) {
     try {
-      const c = AppConfig.COMMENT_COLS;
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
+      const c = AppConfig.COMMENT_COLS; const mc = AppConfig.MASTER_COLS;
+      const enc = encodeURIComponent; const now = this._now();
       const role = Auth.getUser()?.role;
-      const now = this._now();
       const canCog = ['ADMIN','CARE_MANAGER','COGNITIVE_SPECIALIST'].includes(role);
       const canEx  = ['ADMIN','CARE_MANAGER','EXERCISE_SPECIALIST'].includes(role);
       const canCm  = ['ADMIN','CARE_MANAGER'].includes(role);
-
-      const existing = await this._get(AppConfig.TABLES.COMMENT,
-        `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
-
+      const existing = await this._get(AppConfig.TABLES.COMMENT, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}&limit=1`);
       const update = { [c.UPDATED_AT]: now };
       if (canCog && d.cogComment !== undefined) { update[c.COG_COMMENT] = String(d.cogComment||''); update[c.COG_UPDATED] = now; }
       if (canEx  && d.exComment  !== undefined) { update[c.EX_COMMENT]  = String(d.exComment ||''); update[c.EX_UPDATED]  = now; }
       if (canCm  && d.cmComment  !== undefined) { update[c.CM_COMMENT]  = String(d.cmComment ||''); update[c.CM_UPDATED]  = now; }
-
       if (existing.length) {
         await this._patch(AppConfig.TABLES.COMMENT, `${c.CLIENT_ID}=eq.${enc(cid)}&${c.ROUND}=eq.${round}`, update);
       } else {
         await this._post(AppConfig.TABLES.COMMENT, {
-          [c.COMMENT_ID]: this._generateId('CMT'),
-          [c.CLIENT_ID]:  String(cid), [c.ROUND]: Number(round),
-          [c.COG_COMMENT]: canCog ? String(d.cogComment||'') : '',
-          [c.COG_UPDATED]: now,
-          [c.EX_COMMENT]:  canEx  ? String(d.exComment ||'') : '',
-          [c.EX_UPDATED]:  now,
-          [c.CM_COMMENT]:  canCm  ? String(d.cmComment ||'') : '',
-          [c.CM_UPDATED]:  now,
+          [c.COMMENT_ID]:  this._generateId(), [c.CLIENT_ID]: String(cid), [c.ROUND]: Number(round),
+          [c.COG_COMMENT]: canCog ? String(d.cogComment||'') : '', [c.COG_UPDATED]: now,
+          [c.EX_COMMENT]:  canEx  ? String(d.exComment ||'') : '', [c.EX_UPDATED]:  now,
+          [c.CM_COMMENT]:  canCm  ? String(d.cmComment ||'') : '', [c.CM_UPDATED]:  now,
           [c.UPDATED_AT]:  now
         });
       }
-      // Master 코멘트 + 플래그 업데이트
       const masterPatch = {};
       if (canCog && d.cogComment !== undefined) masterPatch[mc.COG_COMMENT] = String(d.cogComment||'');
       if (canEx  && d.exComment  !== undefined) masterPatch[mc.EX_COMMENT]  = String(d.exComment ||'');
       if (canCm  && d.cmComment  !== undefined) masterPatch[mc.CM_COMMENT]  = String(d.cmComment ||'');
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
         { ...masterPatch, ...flags });
       this._bust('getRoundData','getClientMasterList','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'코멘트가 저장되었습니다.' }};
+      return { status:'success', data: { message:'코멘트가 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'코멘트 저장 오류: ' + e.message }; }
   },
 
@@ -934,54 +895,39 @@ const API = {
       const enc = encodeURIComponent;
       const mc = AppConfig.MASTER_COLS;
       const tableMap = {
-        cognitive: AppConfig.TABLES.COGNITIVE,
-        ergo:      AppConfig.TABLES.MOVEMENT_ERGO,
-        everex:    AppConfig.TABLES.MOVEMENT_EVEREX,
-        fra:       AppConfig.TABLES.MOVEMENT_INBODY_FRA,
-        inbody:    AppConfig.TABLES.METABOLISM_INBODY,
-        stress:    AppConfig.TABLES.METABOLISM_STRESS,
-        comment:   AppConfig.TABLES.COMMENT
+        cognitive: [AppConfig.TABLES.COGNITIVE,           AppConfig.COG_COLS],
+        ergo:      [AppConfig.TABLES.MOVEMENT_ERGO,       AppConfig.ERGO_COLS],
+        everex:    [AppConfig.TABLES.MOVEMENT_EVEREX,     AppConfig.EVEREX_COLS],
+        fra:       [AppConfig.TABLES.MOVEMENT_INBODY_FRA, AppConfig.FRA_COLS],
+        inbody:    [AppConfig.TABLES.METABOLISM_INBODY,   AppConfig.INBODY_COLS],
+        stress:    [AppConfig.TABLES.METABOLISM_STRESS,   AppConfig.STRESS_COLS],
+        comment:   [AppConfig.TABLES.COMMENT,             AppConfig.COMMENT_COLS]
       };
-      const colMap = {
-        cognitive: AppConfig.COG_COLS,
-        ergo:      AppConfig.ERGO_COLS,
-        everex:    AppConfig.EVEREX_COLS,
-        fra:       AppConfig.FRA_COLS,
-        inbody:    AppConfig.INBODY_COLS,
-        stress:    AppConfig.STRESS_COLS,
-        comment:   AppConfig.COMMENT_COLS
-      };
-      const table = tableMap[type];
-      const cols  = colMap[type];
+      const [table, cols] = tableMap[type] || [];
       if (!table) return { status:'error', message:'잘못된 타입입니다.' };
       await this._delete(table, `${cols.CLIENT_ID}=eq.${enc(cid)}&${cols.ROUND}=eq.${round}`);
-      // 플래그 재계산
       const flags = await this._refreshMasterFlags(cid, round);
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`, flags);
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`, flags);
       this._bust('getRoundData','getClientMasterList','getClients','getAssessOverview','getInitialData');
-      return { status:'success', data: { message:'데이터가 삭제되었습니다.' }};
+      return { status:'success', data: { message:'데이터가 삭제되었습니다.' } };
     } catch(e) { return { status:'error', message:'삭제 오류: ' + e.message }; }
   },
 
   generateReport: async function(cid, round, force) {
     try {
-      const mc = AppConfig.MASTER_COLS;
-      const enc = encodeURIComponent;
+      const mc = AppConfig.MASTER_COLS; const enc = encodeURIComponent;
       const masterRows = await this._get(AppConfig.TABLES.ASSESS_MASTER,
         `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`);
       if (!masterRows.length) return { status:'error', message:'평가 데이터가 없습니다.' };
       const m = this._rowToMaster(masterRows[0]);
       if (m.reportGenerated && !force)
-        return { status:'success', data: { alreadyExists: true, message:'이미 생성된 통합 리포트가 있습니다.' }};
+        return { status:'success', data: { alreadyExists: true, message:'이미 생성된 통합 리포트가 있습니다.' } };
       if (!m.cognitiveDone || !m.movementDone || !m.metabolismDone)
         return { status:'error', message:'인지평가, 움직임평가, 대사평가를 완료한 후 통합 리포트를 생성할 수 있습니다.' };
 
-      // 평가일: 각 시트의 측정일 중 최신값
-      const cc = AppConfig.COG_COLS; const ec = AppConfig.ERGO_COLS;
-      const xc = AppConfig.EVEREX_COLS; const fc = AppConfig.FRA_COLS;
-      const ic = AppConfig.INBODY_COLS; const sc = AppConfig.STRESS_COLS;
-      const [cRows, eRows, xRows, fRows, iRows, sRows] = await Promise.all([
+      const cc=AppConfig.COG_COLS; const ec=AppConfig.ERGO_COLS; const xc=AppConfig.EVEREX_COLS;
+      const fc=AppConfig.FRA_COLS; const ic=AppConfig.INBODY_COLS; const sc=AppConfig.STRESS_COLS;
+      const [cR,eR,xR,fR,iR,sR] = await Promise.all([
         this._get(AppConfig.TABLES.COGNITIVE,           `${cc.CLIENT_ID}=eq.${enc(cid)}&${cc.ROUND}=eq.${round}&select=${cc.MEASURE_DATE}&limit=1`),
         this._get(AppConfig.TABLES.MOVEMENT_ERGO,       `${ec.CLIENT_ID}=eq.${enc(cid)}&${ec.ROUND}=eq.${round}&select=${ec.MEASURE_DATE}&limit=1`),
         this._get(AppConfig.TABLES.MOVEMENT_EVEREX,     `${xc.CLIENT_ID}=eq.${enc(cid)}&${xc.ROUND}=eq.${round}&select=${xc.MEASURE_DATE}&limit=1`),
@@ -989,58 +935,45 @@ const API = {
         this._get(AppConfig.TABLES.METABOLISM_INBODY,   `${ic.CLIENT_ID}=eq.${enc(cid)}&${ic.ROUND}=eq.${round}&select=${ic.MEASURE_DATE}&limit=1`),
         this._get(AppConfig.TABLES.METABOLISM_STRESS,   `${sc.CLIENT_ID}=eq.${enc(cid)}&${sc.ROUND}=eq.${round}&select=${sc.MEASURE_DATE}&limit=1`)
       ]);
-      const allDates = [
-        cRows[0]?.[cc.MEASURE_DATE], eRows[0]?.[ec.MEASURE_DATE], xRows[0]?.[xc.MEASURE_DATE],
-        fRows[0]?.[fc.MEASURE_DATE], iRows[0]?.[ic.MEASURE_DATE], sRows[0]?.[sc.MEASURE_DATE]
-      ].filter(Boolean).map(d => this._safeDateStr(d));
-      const assessDate = allDates.length ? allDates.sort().reverse()[0] : '';
+      const allDates = [cR[0]?.[cc.MEASURE_DATE],eR[0]?.[ec.MEASURE_DATE],xR[0]?.[xc.MEASURE_DATE],
+        fR[0]?.[fc.MEASURE_DATE],iR[0]?.[ic.MEASURE_DATE],sR[0]?.[sc.MEASURE_DATE]]
+        .filter(Boolean).map(d => this._safeDateStr(d));
+      const assessDate      = allDates.length ? allDates.sort().reverse()[0] : '';
       const reportCreatedAt = this._now();
 
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`, {
-          [mc.REPORT_GENERATED]: true,
-          [mc.ASSESS_DATE]: assessDate,
-          [mc.REPORT_CREATED_AT]: reportCreatedAt
-        });
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+        { [mc.REPORT_GENERATED]: true, [mc.ASSESS_DATE]: assessDate, [mc.REPORT_CREATED_AT]: reportCreatedAt });
 
-      // 고객 완료_회차수 증가
       const cc2 = AppConfig.CLIENT_COLS;
       const clientRows = await this._get(AppConfig.TABLES.CLIENTS,
         `${cc2.CLIENT_ID}=eq.${enc(cid)}&select=${cc2.DONE_ROUNDS},${cc2.TOTAL_ROUNDS}&limit=1`);
       if (clientRows.length) {
         const cur = Number(clientRows[0][cc2.DONE_ROUNDS] || 0);
         const tot = Number(clientRows[0][cc2.TOTAL_ROUNDS] || 0);
-        await this._patch(AppConfig.TABLES.CLIENTS,
-          `${cc2.CLIENT_ID}=eq.${enc(cid)}`,
+        await this._patch(AppConfig.TABLES.CLIENTS, `${cc2.CLIENT_ID}=eq.${enc(cid)}`,
           { [cc2.DONE_ROUNDS]: Math.min(cur + 1, tot) });
       }
-
       this._bust('getClientMasterList','getClients','getClientDetail','getInitialData');
-      const updatedRows = await this._get(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`);
-      const masterData = updatedRows.length ? this._rowToMaster(updatedRows[0]) : null;
-      return { status:'success', data: { message:`${round}회차 통합 리포트가 생성되었습니다.`, reportGenerated: true, masterData }};
+      const updated = await this._get(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`);
+      const masterData = updated.length ? this._rowToMaster(updated[0]) : null;
+      return { status:'success', data: { message:`${round}회차 통합 리포트가 생성되었습니다.`, reportGenerated: true, masterData } };
     } catch(e) { return { status:'error', message:'리포트 생성 오류: ' + e.message }; }
   },
 
   invalidateReport: async function(cid, round) {
     try {
-      const mc = AppConfig.MASTER_COLS;
-      const cc = AppConfig.CLIENT_COLS;
+      const mc = AppConfig.MASTER_COLS; const cc = AppConfig.CLIENT_COLS;
       const enc = encodeURIComponent;
-      await this._patch(AppConfig.TABLES.ASSESS_MASTER,
-        `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
+      await this._patch(AppConfig.TABLES.ASSESS_MASTER, `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}`,
         { [mc.REPORT_GENERATED]: false });
-      const clientRows = await this._get(AppConfig.TABLES.CLIENTS,
-        `${cc.CLIENT_ID}=eq.${enc(cid)}&select=${cc.DONE_ROUNDS}&limit=1`);
+      const clientRows = await this._get(AppConfig.TABLES.CLIENTS, `${cc.CLIENT_ID}=eq.${enc(cid)}&select=${cc.DONE_ROUNDS}&limit=1`);
       if (clientRows.length) {
         const cur = Number(clientRows[0][cc.DONE_ROUNDS] || 0);
-        await this._patch(AppConfig.TABLES.CLIENTS,
-          `${cc.CLIENT_ID}=eq.${enc(cid)}`,
+        await this._patch(AppConfig.TABLES.CLIENTS, `${cc.CLIENT_ID}=eq.${enc(cid)}`,
           { [cc.DONE_ROUNDS]: Math.max(cur - 1, 0) });
       }
       this._bust('getClientMasterList','getClients','getInitialData');
-      return { status:'success', data: { message:'리포트가 무효화되었습니다.' }};
+      return { status:'success', data: { message:'리포트가 무효화되었습니다.' } };
     } catch(e) { return { status:'error', message:'리포트 무효화 오류: ' + e.message }; }
   },
 
@@ -1053,25 +986,23 @@ const API = {
     if (cached) return { status:'success', data: cached };
     try {
       const sc = AppConfig.STANDARDS_COLS;
-      const rows = await this._get(AppConfig.TABLES.STANDARDS,
-        `select=*&order=${sc.CATEGORY}.asc,${sc.ORDER}.asc`);
+      const rows = await this._get(AppConfig.TABLES.STANDARDS, `select=*&order=${sc.CATEGORY}.asc,${sc.ORDER}.asc`);
       if (!rows.length) {
         return { status:'success', data: { standards: {
           inbodyFra: {
-            sensory:  [{ key:'sensory_1',label:'감각계 평가',order:1 },{ key:'sensory_2',label:'체성감각 평가',order:2 },{ key:'sensory_3',label:'시각 평가',order:3 },{ key:'sensory_4',label:'전정감각 평가',order:4 }],
-            balance:  [{ key:'balance_1',label:'통합 균형 능력 평가',order:1 },{ key:'balance_2',label:'빠르게 무게중심 옮기기 평가',order:2 },{ key:'balance_3',label:'과녁 따라 무게중심 옮기기 평가',order:3 }],
-            nervous:  [{ key:'nervous_1',label:'신경계 평가',order:1 },{ key:'nervous_2',label:'반응시간 평가',order:2 },{ key:'nervous_3',label:'자세유지시간 평가',order:3 }]
+            sensory:  [{key:'sensory_1',label:'감각계 평가',order:1},{key:'sensory_2',label:'체성감각 평가',order:2},{key:'sensory_3',label:'시각 평가',order:3},{key:'sensory_4',label:'전정감각 평가',order:4}],
+            balance:  [{key:'balance_1',label:'통합 균형 능력 평가',order:1},{key:'balance_2',label:'빠르게 무게중심 옮기기 평가',order:2},{key:'balance_3',label:'과녁 따라 무게중심 옮기기 평가',order:3}],
+            nervous:  [{key:'nervous_1',label:'신경계 평가',order:1},{key:'nervous_2',label:'반응시간 평가',order:2},{key:'nervous_3',label:'자세유지시간 평가',order:3}]
           }
         }, isDefault: true }};
       }
       const standards = {};
       rows.forEach(r => {
-        const cat = r[sc.CATEGORY];
-        if (!cat) return;
+        const cat = r[sc.CATEGORY]; if (!cat) return;
         if (!standards[cat]) standards[cat] = [];
         standards[cat].push({ key: r[sc.KEY], label: r[sc.LABEL], order: Number(r[sc.ORDER]||0) });
       });
-      const result = { status:'success', data: { standards }};
+      const result = { status:'success', data: { standards } };
       this._setCache('getStandards', {}, result);
       return result;
     } catch(e) { return { status:'error', message:'기준값 조회 오류: ' + e.message }; }
@@ -1079,24 +1010,18 @@ const API = {
 
   saveStandards: async function(cat, items) {
     try {
-      const sc = AppConfig.STANDARDS_COLS;
-      const now = this._now();
-      // 기존 카테고리 삭제 후 재삽입
-      await this._delete(AppConfig.TABLES.STANDARDS,
-        `${sc.CATEGORY}=eq.${encodeURIComponent(cat)}`);
+      const sc = AppConfig.STANDARDS_COLS; const now = this._now();
+      await this._delete(AppConfig.TABLES.STANDARDS, `${sc.CATEGORY}=eq.${encodeURIComponent(cat)}`);
       if (items.length) {
         await Promise.all(items.map((item, idx) =>
           this._post(AppConfig.TABLES.STANDARDS, {
-            [sc.CATEGORY]: cat,
-            [sc.KEY]:      String(item.key || `${cat}_${idx+1}`),
-            [sc.LABEL]:    String(item.label || ''),
-            [sc.ORDER]:    idx + 1,
-            [sc.UPDATED_AT]: now
+            [sc.CATEGORY]: cat, [sc.KEY]: String(item.key||`${cat}_${idx+1}`),
+            [sc.LABEL]: String(item.label||''), [sc.ORDER]: idx+1, [sc.UPDATED_AT]: now
           })
         ));
       }
       this._bust('getStandards');
-      return { status:'success', data: { message:'기준값이 저장되었습니다.' }};
+      return { status:'success', data: { message:'기준값이 저장되었습니다.' } };
     } catch(e) { return { status:'error', message:'기준값 저장 오류: ' + e.message }; }
   }
 };

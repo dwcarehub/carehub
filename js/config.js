@@ -12,22 +12,27 @@
 //   carehub.netlify.app (실제 도메인)   → PROD API 자동 연결
 //
 // ============================================================
-const _API_URLS = {
-  dev:  'https://script.google.com/macros/s/AKfycbxnSaHNVBxCshbx-kwc3eTseJ4nfPOXgrJ7sumrysbrN4uDiO51AQwoW51TE9lJOPpgPA/exec',
-  prod: 'https://script.google.com/macros/s/AKfycbxU1r6j2nTrF3nN9FxIL8xRd8PFUqnqoP_wF4ZH5rlFA7YmiZwDhk0bqMPClOQR4Yxjlg/exec',
-};
+// const _API_URLS = {
+//   dev:  'https://script.google.com/macros/s/AKfycbxnSaHNVBxCshbx-kwc3eTseJ4nfPOXgrJ7sumrysbrN4uDiO51AQwoW51TE9lJOPpgPA/exec',
+//   prod: 'https://script.google.com/macros/s/AKfycbxU1r6j2nTrF3nN9FxIL8xRd8PFUqnqoP_wF4ZH5rlFA7YmiZwDhk0bqMPClOQR4Yxjlg/exec',
+// };
 
-const _isProd = (() => {
-  const host = window.location.hostname;
-  // localhost, 127.0.0.1, carehub-dev.netlify.app → DEV
-  // 그 외 모든 도메인 → PROD
-  return !['localhost', '127.0.0.1'].includes(host) && !host.includes('carehub-report-dev');
-})();
+// const _isProd = (() => {
+//   const host = window.location.hostname;
+//   // localhost, 127.0.0.1, carehub-dev.netlify.app → DEV
+//   // 그 외 모든 도메인 → PROD
+//   return !['localhost', '127.0.0.1'].includes(host) && !host.includes('carehub-report-dev');
+// })();
 
 const AppConfig = {
-  ENV:     _isProd ? 'prod' : 'dev',
-  API_URL: _isProd ? _API_URLS.prod : _API_URLS.dev,
+  SUPABASE_URL:
+    "https://ngshvlonttthwuozygqx.supabase.co",
 
+  SUPABASE_ANON_KEY:
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5nc2h2bG9udHR0aHd1b3p5Z3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MDc5MzEsImV4cCI6MjA5Nzk4MzkzMX0.r-8vKXv3gWJGpD1LHy39d5GqQ3rSaiIKo24Mm_zhW5Y",
+
+  STORAGE_KEY: "carehub_user",
+  
   ROLES: {
     ADMIN:'전체 관리자', CARE_MANAGER:'케어 매니저',
     COGNITIVE_SPECIALIST:'인지 전문가', EXERCISE_SPECIALIST:'운동 전문가'

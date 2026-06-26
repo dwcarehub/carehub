@@ -82,14 +82,31 @@ const API = {
   // ── 사용자 ──────────────────────────────────────────────
   login: async (id, pw) => {
     // 로그인은 캐시·dedup 없이 항상 직접 요청
-    const r = await fetch(AppConfig.API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({action:'login', loginId:id, password:pw}),
-      redirect: 'follow'
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
+    const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("login_id", id)
+    .eq("password", pw)
+    .eq("status", "사용")
+    .single();
+
+  if (error || !data) {
+    return {
+      status: "error",
+      message: "아이디 또는 비밀번호가 올바르지 않습니다."
+    };
+  }
+
+  return {
+    status: "success",
+    data: {
+      userId: data.user_id,
+      loginId: data.login_id,
+      name: data.name,
+      role: data.role,
+      status: data.status
+    }
+  };
   },
   getUsers:       ()           => API.call({action:'getUsers',       requesterId:Auth.getUser().userId}),
   createUser:     (d)          => API.call({action:'createUser',     requesterId:Auth.getUser().userId,...d}),

@@ -77,7 +77,10 @@ const ReportsPage = {
   _loadData: async function() {
     try {
       UI.showLoading();
-      const [clientRes, ovRes] = await Promise.all([API.getClients(), API.getAssessOverview()]);
+      // getInitialData 한 번에 clients + overview 모두 가져옴 (캐시 공유)
+      const r = await API.getInitialData();
+      const clientRes = { status: r.status, data: { clients: r.data?.clients || [] } };
+      const ovRes     = { status: r.status, data: { overview: r.data?.overview || {} } };
       if (clientRes.status==='success') {
         this.allClients = {};
         (clientRes.data.clients||[]).forEach(c => { this.allClients[c.clientId]=c; });

@@ -24,13 +24,13 @@ const API = {
     const key = action + '_' + (params?.clientId||'') + '_' + (params?.round||'');
     const ttl = this._CACHE_TTL[action];
     if (!ttl || !this._cache[key]) return null;
-    const { data, ts } = this._cache[key];
+    const { result, ts } = this._cache[key];
     if (Date.now() - ts >= ttl) return null;
-    return { data: data.data, ts };
+    return result;
   },
   _setCache: function(action, params, result) {
     const key = action + '_' + (params?.clientId||'') + '_' + (params?.round||'');
-    this._cache[key] = { data: result, ts: Date.now() };
+    this._cache[key] = { result, ts: Date.now() };
   },
   _bust: function(...actions) {
     actions.forEach(a => {
@@ -415,7 +415,7 @@ const API = {
 
   getClients: async function() {
     const cached = this._getCached('getClients', {});
-    if (cached) return { status:'success', data: cached };
+    if (cached) return cached;
     try {
       const cc = AppConfig.CLIENT_COLS;
       const mc = AppConfig.MASTER_COLS;
@@ -538,7 +538,7 @@ const API = {
 
   getInitialData: async function() {
     const cached = this._getCached('getInitialData', {});
-    if (cached) return { status:'success', data: cached };
+    if (cached) return cached;
     try {
       const cc = AppConfig.CLIENT_COLS;
       const mc = AppConfig.MASTER_COLS;
@@ -582,7 +582,7 @@ const API = {
 
   getAssessOverview: async function() {
     const cached = this._getCached('getAssessOverview', {});
-    if (cached) return { status:'success', data: cached };
+    if (cached) return cached;
     try {
       const mc = AppConfig.MASTER_COLS;
       const rows = await this._get(AppConfig.TABLES.ASSESS_MASTER, `select=*`);
@@ -983,7 +983,7 @@ const API = {
 
   getStandards: async function() {
     const cached = this._getCached('getStandards', {});
-    if (cached) return { status:'success', data: cached };
+    if (cached) return cached;
     try {
       const sc = AppConfig.STANDARDS_COLS;
       const rows = await this._get(AppConfig.TABLES.STANDARDS, `select=*&order=${sc.CATEGORY}.asc,${sc.ORDER}.asc`);

@@ -124,7 +124,19 @@
 <!-- ============================================================
      JavaScript 로드 순서: config → modules → api → pages → app
      ============================================================ -->
+<!-- ✅ 1. Supabase 라이브러리 -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- ✅ 2. config.js -->
 <script src="js/config.js"></script>
+
+<!-- ✅ 3. Supabase 클라이언트 초기화 -->
+<script>
+  const supabase = window.supabase.createClient(
+    AppConfig.SUPABASE_URL,
+    AppConfig.SUPABASE_ANON
+  );
+</script>
 <script src="js/modules/auth.js"></script>
 <script src="js/modules/ui.js"></script>
 <script src="js/modules/router.js"></script>

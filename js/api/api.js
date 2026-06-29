@@ -43,7 +43,7 @@ const API = {
 
   // ✅ async로 변경 — Supabase Auth session token 사용
   _headers: async function() {
-    const { data } = await supabase.auth.getSession();
+    const { data } = await supabaseClient.auth.getSession();
     const token = data?.session?.access_token || AppConfig.SUPABASE_ANON;
     return {
       'Content-Type':  'application/json',
@@ -306,7 +306,7 @@ const API = {
   // ✅ Supabase Auth 연동 로그인
   login: async function(id, pw) {
     try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
         email: id,
         password: pw
       });

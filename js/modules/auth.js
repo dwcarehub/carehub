@@ -33,7 +33,7 @@ const Auth = {
    */
   logout: function() {
     // localStorage.removeItem(AppConfig.STORAGE_KEY);
-    supabase.auth.signOut(); // ✅ Supabase Auth 로그아웃
+    supabaseClient.auth.signOut(); // ✅ Supabase Auth 로그아웃
     localStorage.removeItem(AppConfig.STORAGE_KEY);
   },
 

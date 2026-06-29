@@ -132,7 +132,7 @@
 
 <!-- ✅ 3. Supabase 클라이언트 초기화 -->
 <script>
-  const supabase = window.supabase.createClient(
+  window.supabaseClient = window.supabase.createClient(
     AppConfig.SUPABASE_URL,
     AppConfig.SUPABASE_ANON
   );

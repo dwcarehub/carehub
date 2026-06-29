@@ -304,38 +304,41 @@ const API = {
   // ============================================================
 
   // ✅ Supabase Auth 연동 로그인
-  login: async function(id, pw) {
-    try {
-      const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
-        email: id,
-        password: pw
-      });
-      if (authError) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+login: async function(id, pw) {
+  try {
+    const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
+      email: id,
+      password: pw
+    });
+    if (authError) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
 
-      const c = AppConfig.USER_COLS;
-      const rows = await this._get(AppConfig.TABLES.USERS,
-        `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
-      if (!rows.length) return { status:'error', message:'사용자 정보를 찾을 수 없습니다.' };
-      const row = rows[0];
-      if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
+    // ✅ email에서 @ 앞부분을 login_id로 사용
+    const loginId = id.includes('@') ? id.split('@')[0] : id;
 
-      const now = this._now();
-      this._patch(AppConfig.TABLES.USERS,
-        `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`,
-        { [c.LAST_LOGIN]: now }).catch(() => {});
+    const c = AppConfig.USER_COLS;
+    const rows = await this._get(AppConfig.TABLES.USERS,
+      `${c.LOGIN_ID}=eq.${encodeURIComponent(loginId)}&limit=1`);
+    if (!rows.length) return { status:'error', message:'사용자 정보를 찾을 수 없습니다.' };
+    const row = rows[0];
+    if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
 
-      return {
-        status: 'success', data: {
-          userId:  row[c.USER_ID],
-          loginId: row[c.LOGIN_ID],
-          name:    row[c.NAME],
-          role:    row[c.ROLE],
-          status:  row[c.STATUS],
-          lastLogin: now
-        }
-      };
-    } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
-  },
+    const now = this._now();
+    this._patch(AppConfig.TABLES.USERS,
+      `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`,
+      { [c.LAST_LOGIN]: now }).catch(() => {});
+
+    return {
+      status: 'success', data: {
+        userId:  row[c.USER_ID],
+        loginId: row[c.LOGIN_ID],
+        name:    row[c.NAME],
+        role:    row[c.ROLE],
+        status:  row[c.STATUS],
+        lastLogin: now
+      }
+    };
+  } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
+},
 
   getUsers: async function() {
     try {

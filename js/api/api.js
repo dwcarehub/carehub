@@ -313,22 +313,51 @@ const API = {
   // ── 사용자 API ─────────────────────────────────────────────
   // ============================================================
 
+  // login: async function(id, pw) {
+  //   try {
+  //     const c = AppConfig.USER_COLS;
+  //     const T = AppConfig.TABLES.USERS;
+  //     const rows = await this._get(T, `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
+  //     if (!rows.length) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+  //     const row = rows[0];
+  //     if (row[c.PASSWORD] !== pw) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+  //     if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
+  //     const now = this._now();
+  //     this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`, { [c.LAST_LOGIN]: now }).catch(() => {});
+  //     return {
+  //       status: 'success', data: {
+  //         userId: row[c.USER_ID], loginId: row[c.LOGIN_ID],
+  //         name: row[c.NAME], role: row[c.ROLE],
+  //         status: row[c.STATUS], lastLogin: now
+  //       }
+  //     };
+  //   } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
+  // },
+
   login: async function(id, pw) {
     try {
+      // ✅ Supabase Auth로 로그인
+      const email = id.includes('@') ? id : `${id}@carehub.com`;
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email, password: pw
+      });
+      if (error) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+  
+      // ✅ users 테이블에서 역할 정보 조회
       const c = AppConfig.USER_COLS;
-      const T = AppConfig.TABLES.USERS;
-      const rows = await this._get(T, `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
-      if (!rows.length) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+      const rows = await this._get(AppConfig.TABLES.USERS,
+        `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
+      if (!rows.length) return { status:'error', message:'사용자 정보를 찾을 수 없습니다.' };
       const row = rows[0];
-      if (row[c.PASSWORD] !== pw) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
-      if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
-      const now = this._now();
-      this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`, { [c.LAST_LOGIN]: now }).catch(() => {});
+      if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다.' };
+  
       return {
         status: 'success', data: {
-          userId: row[c.USER_ID], loginId: row[c.LOGIN_ID],
-          name: row[c.NAME], role: row[c.ROLE],
-          status: row[c.STATUS], lastLogin: now
+          userId:  row[c.USER_ID],
+          loginId: row[c.LOGIN_ID],
+          name:    row[c.NAME],
+          role:    row[c.ROLE],
+          status:  row[c.STATUS]
         }
       };
     } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }

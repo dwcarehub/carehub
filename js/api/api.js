@@ -55,9 +55,8 @@ const API = {
     //   'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
     //   'Prefer':        'return=representation'
     // };
-      // ✅ 로그인 후 session token 사용
-  const session = supabase.auth.getSession();
-  const token = session?.data?.session?.access_token || AppConfig.SUPABASE_ANON;
+   const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token || AppConfig.SUPABASE_ANON;
   return {
     'Content-Type':  'application/json',
     'apikey':        AppConfig.SUPABASE_ANON,
@@ -341,15 +340,15 @@ const API = {
     //     }
     //   };
     // } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
-      try {
+   try {
     // ✅ Supabase Auth로 로그인
-    const email = id.includes('@') ? id : `${id}@carehub.com`;
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email, password: pw
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: id,
+      password: pw
     });
-    if (error) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+    if (authError) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
 
-    // ✅ users 테이블에서 역할 정보 조회
+    // ✅ users 테이블에서 역할/이름 조회
     const c = AppConfig.USER_COLS;
     const rows = await this._get(AppConfig.TABLES.USERS,
       `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);

@@ -112,9 +112,7 @@ const ClientsPage = {
     if (!wrap) return;
     try {
       UI.showLoading();
-      // getInitialData 캐시 활용 (대시보드와 데이터 공유)
-      const init = await API.getInitialData();
-      const res = { status: init.status, message: init.message, data: { clients: init.data?.clients || [] } };
+      const res = await API.getClients();
       if (res.status === 'success') {
         this.allClients = res.data.clients || [];
         this._applyFilter();

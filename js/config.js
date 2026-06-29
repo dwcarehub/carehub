@@ -1,177 +1,33 @@
 // ============================================================
-// config.js - Supabase 버전
+// config.js - v9
 // ============================================================
 //
-// ★ Supabase 설정
-//   아래 두 값만 실제 값으로 교체하세요.
-//   SUPABASE_URL  → Supabase 프로젝트 Settings > API > Project URL
-//   SUPABASE_ANON → Supabase 프로젝트 Settings > API > anon public key
+// ★ API URL 설정
+//   아래 두 줄만 실제 URL로 교체하세요.
+//   DEV URL  → Apps Script DEV 웹앱 배포 후 복사
+//   PROD URL → Apps Script PROD 웹앱 배포 후 복사
+//
+//   배포 후에는 이 파일을 다시 건드릴 필요 없습니다.
+//   localhost / carehub-dev.netlify.app → DEV API 자동 연결
+//   carehub.netlify.app (실제 도메인)   → PROD API 자동 연결
 //
 // ============================================================
+const _API_URLS = {
+  dev:  'https://script.google.com/macros/s/18h-uPlYDYHBIXi7SIqeQKvS2XciD3LLR6cFNrFO9VGo/exec',
+  prod: 'https://script.google.com/macros/s/18I2sxKf8TKaiRvUoBsq-nM6KEZJrJ3oKVgXAFKjgFAo/exec',
+};
+
+const _isProd = (() => {
+  const host = window.location.hostname;
+  // localhost, 127.0.0.1, carehub-dev.netlify.app → DEV
+  // 그 외 모든 도메인 → PROD
+  return !['localhost', '127.0.0.1'].includes(host) && !host.includes('carehub-dev');
+})();
 
 const AppConfig = {
+  ENV:     _isProd ? 'prod' : 'dev',
+  API_URL: _isProd ? _API_URLS.prod : _API_URLS.dev,
 
-  // ── Supabase 연결 정보 ─────────────────────────────────────
-  SUPABASE_URL:  'https://ngshvlonttthwuozygqx.supabase.co',
-  SUPABASE_ANON: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5nc2h2bG9udHR0aHd1b3p5Z3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MDc5MzEsImV4cCI6MjA5Nzk4MzkzMX0.r-8vKXv3gWJGpD1LHy39d5GqQ3rSaiIKo24Mm_zhW5Y',
-
-  // ── 테이블명 ───────────────────────────────────────────────
-  TABLES: {
-    USERS:               'users',
-    CLIENTS:             '고객_Master',
-    ASSESS_MASTER:       '평가_Master',
-    COGNITIVE:           '인지_실비아',
-    MOVEMENT_ERGO:       '움직임_에르고미터',
-    MOVEMENT_EVEREX:     '움직임_에버엑스',
-    MOVEMENT_INBODY_FRA: '움직임_인바디FRA',
-    METABOLISM_INBODY:   '대사_인바디',
-    METABOLISM_STRESS:   '대사_스트레스',
-    COMMENT:             '코멘트',
-    STANDARDS:           '기준값_관리'
-  },
-
-  // ── 컬럼명 (수퍼베이스 DB 실제 컬럼명) ─────────────────────
-  USER_COLS: {
-    USER_ID:    'user_id',
-    LOGIN_ID:   'login_id',
-    PASSWORD:   'password',
-    NAME:       'name',
-    ROLE:       'role',
-    STATUS:     'status',
-    CREATED_AT: 'created_at',
-    LAST_LOGIN: 'last_login'
-  },
-
-  CLIENT_COLS: {
-    CLIENT_ID:    '고객_ID',
-    NAME:         '고객명',
-    BIRTH_DATE:   '생년월일',
-    GENDER:       '성별',
-    PHONE:        '휴대전화번호',
-    FIRST_VISIT:  '최초_내원일',
-    ADMIT_DATE:   '입소일자',
-    ADMIT_PERIOD: '입소기간',
-    END_DATE:     '종료_예정일',
-    TOTAL_ROUNDS: '총_회차수',
-    DONE_ROUNDS:  '완료_회차수',
-    STATUS:       '상태',
-    ROOM_NUM:     '입실호수',
-    NOTE:         '비고'
-  },
-
-  COG_COLS: {
-    ASSESS_ID:      '평가_ID',
-    CLIENT_ID:      '고객_ID',
-    MEASURE_DATE:   '측정일',
-    ROUND:          '회차',
-    COG_SCORE:      '인지점수',
-    SPATIAL:        '시공간능력',
-    MEMORY:         '기억력',
-    AGE_PERCENTILE: '동연령대 상위 분포도',
-    DEPRESSION:     '우울점수',
-    DEMENTIA_RISK:  '치매위험요인',
-    CREATED_AT:     '등록일시'
-  },
-
-  ERGO_COLS: {
-    ASSESS_ID:    '평가_ID',
-    CLIENT_ID:    '고객_ID',
-    MEASURE_DATE: '측정일',
-    ROUND:        '회차',
-    CARDIO_SCORE: '심폐기능지수',
-    CARDIO_INDEX: 'VO2peak 등급',
-    CREATED_AT:   '등록일시'
-  },
-
-  EVEREX_COLS: {
-    ASSESS_ID:           '평가_ID',
-    CLIENT_ID:           '고객_ID',
-    MEASURE_DATE:        '측정일',
-    ROUND:               '회차',
-    BODY_MOVEMENT_INDEX: '신체 움직임 점수',
-    CREATED_AT:          '등록일시'
-  },
-
-  FRA_COLS: {
-    ASSESS_ID:     '평가_ID',
-    CLIENT_ID:     '고객_ID',
-    MEASURE_DATE:  '측정일',
-    ROUND:         '회차',
-    NERVOUS_SCORE: '신경계 점수',
-    BALANCE_SCORE: '통합 균형능력 점수',
-    SENSORY_SCORE: '감각계 점수',
-    CREATED_AT:    '등록일시'
-  },
-
-  INBODY_COLS: {
-    ASSESS_ID:       '평가_ID',
-    CLIENT_ID:       '고객_ID',
-    MEASURE_DATE:    '측정일',
-    ROUND:           '회차',
-    BODY_COMP_SCORE: '체성분 종합 점수',
-    CREATED_AT:      '등록일시'
-  },
-
-  STRESS_COLS: {
-    ASSESS_ID:    '평가_ID',
-    CLIENT_ID:    '고객_ID',
-    MEASURE_DATE: '측정일',
-    ROUND:        '회차',
-    STRESS_SCORE: '스트레스 점수',
-    CREATED_AT:   '등록일시'
-  },
-
-  COMMENT_COLS: {
-    COMMENT_ID:  '코멘트_ID',
-    CLIENT_ID:   '고객_ID',
-    ROUND:       '회차',
-    COG_COMMENT: '인지 전문가 코멘트',
-    COG_UPDATED: '인지 수정일',
-    EX_COMMENT:  '운동 전문가 코멘트',
-    EX_UPDATED:  '운동 수정일',
-    CM_COMMENT:  '케어 매니저 코멘트',
-    CM_UPDATED:  'CM 수정일',
-    UPDATED_AT:  '최종수정일'
-  },
-
-  MASTER_COLS: {
-    REPORT_ID:           '리포트_ID',
-    CLIENT_ID:           '고객_ID',
-    ROUND:               '회차',
-    COG_SCORE:           '인지점수',
-    AGE_PERCENTILE:      '동연령대 상위 분포도',
-    DEPRESSION:          '우울점수',
-    DEMENTIA_RISK:       '치매위험요인',
-    CARDIO_SCORE:        '심폐기능 점수',
-    CARDIO_INDEX:        '심폐 기능 지수',
-    BODY_MOVEMENT_INDEX: '신체 움직임 지수',
-    NERVOUS_SCORE:       '신경계 점수',
-    BALANCE_SCORE:       '통합 균형능력 점수',
-    SENSORY_SCORE:       '감각계 점수',
-    BODY_COMP_SCORE:     '체성분 종합 점수',
-    STRESS_SCORE:        '스트레스 점수',
-    COG_COMMENT:         '인지 전문가 코멘트',
-    EX_COMMENT:          '운동 전문가 코멘트',
-    CM_COMMENT:          '케어 매니저 코멘트',
-    COGNITIVE_DONE:      '인지평가완료',
-    MOVEMENT_DONE:       '움직임평가완료',
-    METABOLISM_DONE:     '대사평가완료',
-    COMMENT_DONE:        '코멘트완료',
-    CREATED_AT:          '생성일',
-    ASSESS_DATE:         'assessDate',
-    REPORT_CREATED_AT:   'reportCreatedAt',
-    REPORT_GENERATED:    '통합리포트생성여부'
-  },
-
-  STANDARDS_COLS: {
-    CATEGORY:   'category',
-    KEY:        'key',
-    LABEL:      'label',
-    ORDER:      'order',
-    UPDATED_AT: 'updatedAt'
-  },
-
-  // ── 앱 공통 설정 ───────────────────────────────────────────
   ROLES: {
     ADMIN:'전체 관리자', CARE_MANAGER:'케어 매니저',
     COGNITIVE_SPECIALIST:'인지 전문가', EXERCISE_SPECIALIST:'운동 전문가'
@@ -181,7 +37,6 @@ const AppConfig = {
   PERIOD_ROUNDS: { '2주':1,'1개월':2,'2개월':3,'3개월':4,'4개월':5,'5개월':6,'6개월':7 },
   PERIOD_DAYS:   { '2주':14,'1개월':28,'2개월':56,'3개월':84,'4개월':112,'5개월':140,'6개월':168 },
   STORAGE_KEY: 'carehub_user',
-  DEFAULT_PASSWORD: 'carehub1234!',
 
   ASSESS_CATEGORIES: [
     { id:'cognitive', label:'인지평가', icon:'🧠' },
@@ -244,6 +99,10 @@ const AppConfig = {
     { label:'만성', min:60, max:Infinity, color:'#C62828', bg:'#FFEBEE' }
   ],
 
+  // ─────────────────────────────────────────────────────────
+  // 메뉴 구조 (새 순서: 대시보드 > 고객관리 > 평가관리 > 리포트관리 > 관리자 > 마이페이지)
+  // type: 'group' 은 접을 수 있는 그룹 헤더
+  // ─────────────────────────────────────────────────────────
   MENUS: [
     {
       id:'dashboard', label:'대시보드',

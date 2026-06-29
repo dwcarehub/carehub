@@ -15,25 +15,14 @@ const Pages = {
 
 const App = {
   init: function() {
-    Router.init();
-    // 로그인 상태면 앱으로, 아니면 로그인 페이지로
-    if (Auth.isLoggedIn()) {
-      this.showApp();
-    } else {
-      history.replaceState(null, '', '/login');
-      this.showLogin();
-    }
-    // 준비 완료 후 보이게
-    document.getElementById('login-page').style.visibility = 'visible';
-    document.getElementById('app-layout').style.visibility = 'visible';
+    // 항상 로그인 페이지로 시작 (자동 로그인 비활성화)
+    Auth.logout();
+    this.showLogin();
   },
 
   showLogin: function() {
     document.getElementById('login-page').classList.remove('hidden');
     document.getElementById('app-layout').classList.add('hidden');
-    if (location.pathname !== '/login') {
-      history.replaceState(null, '', '/login');
-    }
     LoginPage.init();
   },
 
@@ -42,10 +31,7 @@ const App = {
     document.getElementById('app-layout').classList.remove('hidden');
     this._renderSidebar();
     this._bindGlobalEvents();
-    // URL 직접 접근 시 해당 페이지 복원, 아니면 dashboard
-    if (!Router.restoreFromUrl()) {
-      Router.navigate('dashboard');
-    }
+    Router.navigate('dashboard');
   },
 
   _renderSidebar: function() {

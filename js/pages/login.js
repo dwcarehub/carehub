@@ -9,16 +9,11 @@ const LoginPage = {
   init: function() {
     const form = document.getElementById('login-form');
     const btn = document.getElementById('login-btn');
-    form.addEventListener('submit', e => {
-      e.preventDefault();
-      this.handleLogin();
-    });
+
+    // 엔터키 → 버튼 클릭만 동작 (form submit 방지)
+    form.addEventListener('submit', e => e.preventDefault());
+
     btn.addEventListener('click', () => this.handleLogin());
-  
-    // 비밀번호 입력창에서 엔터키
-    document.getElementById('login-password').addEventListener('keydown', e => {
-      if (e.key === 'Enter') this.handleLogin();
-    });
   },
 
   /**

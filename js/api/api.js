@@ -48,14 +48,26 @@ const API = {
     return query ? `${base}?${query}` : base;
   },
 
-  _headers: function() {
+  // _headers: function() {
+  //   return {
+  //     'Content-Type':  'application/json',
+  //     'apikey':        AppConfig.SUPABASE_ANON,
+  //     'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
+  //     'Prefer':        'return=representation'
+  //   };
+  // },
+
+ _headers: function() {
+    // ✅ 로그인 후 session token 사용
+    const session = supabase.auth.getSession();
+    const token = session?.data?.session?.access_token || AppConfig.SUPABASE_ANON;
     return {
       'Content-Type':  'application/json',
       'apikey':        AppConfig.SUPABASE_ANON,
-      'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
+      'Authorization': `Bearer ${token}`,
       'Prefer':        'return=representation'
     };
-  },
+  }, 
 
   // ★ 수정2: 쿼리 파라미터에서 컬럼명·값 인코딩 처리
   //   col=eq.val 형태에서 공백 있는 컬럼명을 안전하게 처리

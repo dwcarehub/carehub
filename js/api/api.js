@@ -1,10 +1,5 @@
 // ============================================================
-// api/api.js - Supabase REST API 버전 (버그 수정)
-//
-// 수정사항:
-// 1. 한글 테이블명 encodeURIComponent 제거 → 그대로 사용
-// 2. 공백 포함 컬럼명 필터 쿼리 → encodeURIComponent 적용
-// 3. 캐시 TTL 유지
+// api/api.js - Supabase REST API 버전 (Supabase Auth 연동)
 // ============================================================
 
 const API = {
@@ -41,43 +36,33 @@ const API = {
   },
 
   // ── Supabase REST 헬퍼 ─────────────────────────────────────
-  // ★ 수정1: 테이블명은 encodeURIComponent 하지 않음
-  //   Supabase PostgREST는 한글 테이블명을 그대로 받음
   _url: function(table, query) {
     const base = `${AppConfig.SUPABASE_URL}/rest/v1/${table}`;
     return query ? `${base}?${query}` : base;
   },
 
-  _headers: function() {
-    // return {
-    //   'Content-Type':  'application/json',
-    //   'apikey':        AppConfig.SUPABASE_ANON,
-    //   'Authorization': `Bearer ${AppConfig.SUPABASE_ANON}`,
-    //   'Prefer':        'return=representation'
-    // };
-   const { data } = await supabase.auth.getSession();
-  const token = data?.session?.access_token || AppConfig.SUPABASE_ANON;
-  return {
-    'Content-Type':  'application/json',
-    'apikey':        AppConfig.SUPABASE_ANON,
-    'Authorization': `Bearer ${token}`,
-    'Prefer':        'return=representation'
-  };
+  // ✅ async로 변경 — Supabase Auth session token 사용
+  _headers: async function() {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token || AppConfig.SUPABASE_ANON;
+    return {
+      'Content-Type':  'application/json',
+      'apikey':        AppConfig.SUPABASE_ANON,
+      'Authorization': `Bearer ${token}`,
+      'Prefer':        'return=representation'
+    };
   },
 
-  // ★ 수정2: 쿼리 파라미터에서 컬럼명·값 인코딩 처리
-  //   col=eq.val 형태에서 공백 있는 컬럼명을 안전하게 처리
   _eq: function(col, val) {
-    // 컬럼명의 공백은 그대로 (PostgREST가 처리), 값만 인코딩
     return `${col}=eq.${encodeURIComponent(val)}`;
   },
 
-  // GET (SELECT)
+  // ✅ await this._headers() 로 변경
   _get: async function(table, query) {
     const url = this._url(table, query);
     const r = await fetch(url, {
       method: 'GET',
-      headers: this._headers()
+      headers: await this._headers()
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
@@ -86,27 +71,24 @@ const API = {
     return r.json();
   },
 
-  // POST (INSERT)
   _post: async function(table, body) {
     const r = await fetch(this._url(table), {
       method: 'POST',
-      headers: this._headers(),
+      headers: await this._headers(),
       body: JSON.stringify(body)
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       throw new Error(err.message || err.hint || `HTTP ${r.status}`);
     }
-    // 204 No Content 처리
     const text = await r.text();
     return text ? JSON.parse(text) : [];
   },
 
-  // PATCH (UPDATE)
   _patch: async function(table, query, body) {
     const r = await fetch(this._url(table, query), {
       method: 'PATCH',
-      headers: this._headers(),
+      headers: await this._headers(),
       body: JSON.stringify(body)
     });
     if (!r.ok) {
@@ -117,11 +99,11 @@ const API = {
     return text ? JSON.parse(text) : [];
   },
 
-  // DELETE
   _delete: async function(table, query) {
+    const headers = await this._headers();
     const r = await fetch(this._url(table, query), {
       method: 'DELETE',
-      headers: { ...this._headers(), Prefer: 'return=minimal' }
+      headers: { ...headers, Prefer: 'return=minimal' }
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
@@ -321,51 +303,38 @@ const API = {
   // ── 사용자 API ─────────────────────────────────────────────
   // ============================================================
 
+  // ✅ Supabase Auth 연동 로그인
   login: async function(id, pw) {
-    // try {
-    //   const c = AppConfig.USER_COLS;
-    //   const T = AppConfig.TABLES.USERS;
-    //   const rows = await this._get(T, `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
-    //   if (!rows.length) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
-    //   const row = rows[0];
-    //   if (row[c.PASSWORD] !== pw) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
-    //   if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
-    //   const now = this._now();
-    //   this._patch(T, `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`, { [c.LAST_LOGIN]: now }).catch(() => {});
-    //   return {
-    //     status: 'success', data: {
-    //       userId: row[c.USER_ID], loginId: row[c.LOGIN_ID],
-    //       name: row[c.NAME], role: row[c.ROLE],
-    //       status: row[c.STATUS], lastLogin: now
-    //     }
-    //   };
-    // } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
-   try {
-    // ✅ Supabase Auth로 로그인
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: id,
-      password: pw
-    });
-    if (authError) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: id,
+        password: pw
+      });
+      if (authError) return { status:'error', message:'아이디 또는 비밀번호가 일치하지 않습니다.' };
 
-    // ✅ users 테이블에서 역할/이름 조회
-    const c = AppConfig.USER_COLS;
-    const rows = await this._get(AppConfig.TABLES.USERS,
-      `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
-    if (!rows.length) return { status:'error', message:'사용자 정보를 찾을 수 없습니다.' };
-    const row = rows[0];
-    if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다.' };
+      const c = AppConfig.USER_COLS;
+      const rows = await this._get(AppConfig.TABLES.USERS,
+        `${c.LOGIN_ID}=eq.${encodeURIComponent(id)}&limit=1`);
+      if (!rows.length) return { status:'error', message:'사용자 정보를 찾을 수 없습니다.' };
+      const row = rows[0];
+      if (row[c.STATUS] !== 'ACTIVE') return { status:'error', message:'비활성화된 계정입니다. 관리자에게 문의해주세요.' };
 
-    return {
-      status: 'success', data: {
-        userId:  row[c.USER_ID],
-        loginId: row[c.LOGIN_ID],
-        name:    row[c.NAME],
-        role:    row[c.ROLE],
-        status:  row[c.STATUS]
-      }
-    };
-  } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
+      const now = this._now();
+      this._patch(AppConfig.TABLES.USERS,
+        `${c.USER_ID}=eq.${encodeURIComponent(row[c.USER_ID])}`,
+        { [c.LAST_LOGIN]: now }).catch(() => {});
+
+      return {
+        status: 'success', data: {
+          userId:  row[c.USER_ID],
+          loginId: row[c.LOGIN_ID],
+          name:    row[c.NAME],
+          role:    row[c.ROLE],
+          status:  row[c.STATUS],
+          lastLogin: now
+        }
+      };
+    } catch(e) { return { status:'error', message:'로그인 오류: ' + e.message }; }
   },
 
   getUsers: async function() {
@@ -701,7 +670,6 @@ const API = {
     } catch(e) { return { status:'error', message:'회차 데이터 조회 오류: ' + e.message }; }
   },
 
-  // ── done 플래그 재계산 ─────────────────────────────────────
   _refreshMasterFlags: async function(cid, round) {
     const enc = encodeURIComponent;
     const mc  = AppConfig.MASTER_COLS;
@@ -726,7 +694,6 @@ const API = {
       [mc.METABOLISM_DONE]: inbR.length > 0 && strR.length > 0,
       [mc.COMMENT_DONE]:    cmRow ? !!(cmRow[cmc.COG_COMMENT] || cmRow[cmc.EX_COMMENT] || cmRow[cmc.CM_COMMENT]) : false
     };
-    // Master가 없으면 생성
     const existing = await this._get(AppConfig.TABLES.ASSESS_MASTER,
       `${mc.CLIENT_ID}=eq.${enc(cid)}&${mc.ROUND}=eq.${round}&limit=1`);
     if (existing.length) {
